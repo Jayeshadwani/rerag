@@ -32,10 +32,17 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_default_config_file_loads() -> None:
     settings = load_settings()
     assert DEFAULT_CONFIG_PATH.is_file()
-    assert settings.paths.raw_dir == Path("data/raw")
+    assert settings.paths.raw_dir == Path("data/rerag-data/notebooks")
     assert settings.paths.db_path == Path("data/noterecall.sqlite")
     assert settings.paths.results_dir == Path("results")
     assert settings.logging.level == "INFO"
+
+
+def test_default_db_is_outside_the_data_repo() -> None:
+    paths = load_settings().paths
+    data_repo = Path("data/rerag-data")
+    assert data_repo in paths.raw_dir.parents
+    assert data_repo not in paths.db_path.parents
 
 
 def test_values_come_from_given_file(tmp_path: Path) -> None:
