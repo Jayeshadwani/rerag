@@ -19,4 +19,4 @@ jobs:
           version: "0.11.32"
           python-version: "3.12"
       - run: make setup
-      - run: make check
+      - run: make -k check
