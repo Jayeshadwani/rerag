@@ -83,7 +83,7 @@ def test_stats_writes_the_report_to_the_default_path(config: Path, tmp_path: Pat
     target = tmp_path / "results" / "corpus_stats.json"
     assert result.stdout.strip() == f"stats: wrote {target}"
     stats = CorpusStats.model_validate_json(target.read_text(encoding="utf-8"))
-    assert (stats.notebooks, stats.cells_raw) == (7, 51)
+    assert (stats.notebooks, stats.cells_raw) == (7, 54)
 
 
 def test_stats_honours_out(config: Path, tmp_path: Path) -> None:

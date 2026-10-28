@@ -2,7 +2,8 @@
 
 Per notebook: replace the payload of inline base64 data URIs in markdown cells, scrub secrets,
 drop image/HTML/error outputs, truncate text outputs, remove instructor notes (rules in
-`config/cleaning_rules.yaml`, markdown cells only), drop empty cells, and hash each cell.
+`config/cleaning_rules.yaml`, markdown cells only), drop empty cells and markdown cells that are
+only image placeholders, and hash each cell.
 Every removal is counted by rule so `noterecall stats` can report it. Data URIs go first
 because their payload is discarded anyway and random base64 can look like a secret; every
 other piece of text is scrubbed before any later step sees it.
@@ -28,6 +29,7 @@ RULE_KEYS: tuple[str, ...] = (
     "instructor_note_cells_dropped",
     "inline_data_uri_removed",
     "inline_data_uri_chars_removed",
+    "image_only_cells_dropped",
     "output_image_dropped",
     "output_html_dropped",
     "output_other_dropped",
@@ -334,35 +336,68 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _clean_source(cell: RawCell, rules: CleaningRules, counts: Counter[str]) -> tuple[str, bool]:
-    """Clean a cell's source. Returns the text and whether instructor notes emptied it."""
+class _CleanedSource(BaseModel):
+    """A cell's cleaned source plus what happened to it on the way."""
+
+    model_config = ConfigDict(frozen=True)
+
+    text: str
+    emptied_by_notes: bool
+    uris_removed: int
+
+
+def _clean_source(cell: RawCell, rules: CleaningRules, counts: Counter[str]) -> _CleanedSource:
+    """Clean a cell's source: data URIs, then secrets, then (markdown only) instructor notes."""
     text = cell.source
     markdown = cell.cell_type is CellType.MARKDOWN
+    uris_removed = 0
     if markdown:
         uris = remove_inline_data_uris(text, rules.inline_data_uri)
         counts["inline_data_uri_removed"] += uris.removed
         counts["inline_data_uri_chars_removed"] += uris.chars
-        text = uris.text
+        text, uris_removed = uris.text, uris.removed
     scrubbed = scrub(text)
     for name, found in scrubbed.counts.items():
         counts[f"secrets_{name}"] += found
     if not markdown:
-        return scrubbed.text, False
+        return _CleanedSource(text=scrubbed.text, emptied_by_notes=False, uris_removed=0)
     removal = remove_instructor_notes(scrubbed.text, rules.instructor_note)
     counts["instructor_notes"] += removal.notes
     counts["instructor_note_lines_removed"] += removal.lines_removed
-    return removal.text, bool(removal.notes) and not removal.text.strip()
+    emptied = bool(removal.notes) and not removal.text.strip()
+    return _CleanedSource(text=removal.text, emptied_by_notes=emptied, uris_removed=uris_removed)
+
+
+def is_image_only(text: str, rule: InlineDataUriRule) -> bool:
+    """True if `text` holds nothing but image placeholders (markdown or HTML), alt text aside."""
+    placeholder = re.escape(rule.replacement)
+    markdown_image = rf"!\[[^\]]*\]\(\s*data:[A-Za-z0-9.+/-]+;base64,{placeholder}\s*\)"
+    html_image = (
+        rf"<img\b[^>]*\bsrc\s*=\s*[\"']data:[A-Za-z0-9.+/-]+;base64,{placeholder}[\"'][^>]*>"
+    )
+    remainder = re.sub(f"{markdown_image}|{html_image}", "", text, flags=re.IGNORECASE)
+    return bool(text.strip()) and not remainder.strip()
 
 
 def _clean_cell(
     cell: RawCell, rules: CleaningRules, max_lines: int, counts: Counter[str]
 ) -> Cell | None:
     """Clean one cell; None if it is dropped."""
-    source, emptied_by_notes = _clean_source(cell, rules, counts)
+    cleaned = _clean_source(cell, rules, counts)
+    source = cleaned.text
     output_text = clean_outputs(cell.outputs, max_lines, counts)
-    keep_empty = emptied_by_notes and not rules.instructor_note.drop_cell_if_empty
+    if (
+        cleaned.uris_removed
+        and not output_text.strip()
+        and is_image_only(source, rules.inline_data_uri)
+    ):
+        counts["image_only_cells_dropped"] += 1
+        return None
+    keep_empty = cleaned.emptied_by_notes and not rules.instructor_note.drop_cell_if_empty
     if not source.strip() and not output_text.strip() and not keep_empty:
-        counts["instructor_note_cells_dropped" if emptied_by_notes else "cells_dropped_empty"] += 1
+        counts[
+            "instructor_note_cells_dropped" if cleaned.emptied_by_notes else "cells_dropped_empty"
+        ] += 1
         return None
     return Cell(
         index=cell.index,

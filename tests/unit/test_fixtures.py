@@ -121,7 +121,8 @@ def test_inline_images_fixture_has_data_uris_in_markdown_and_code() -> None:
     nb = _load("07_inline_images.ipynb")
     markdown_uris = sum(src.count("base64,") for src in _sources(nb, "markdown"))
     code_uris = sum(src.count("base64,") for src in _sources(nb, "code"))
-    assert (markdown_uris, code_uris) == (6, 1)  # i2, i3, i4 (two), i8 + the i6 prefix; i7 in code
+    # markdown: i2, i3, i4 (two), i8, i9, i10, i11 + the i6 prefix mention = 9; code: i7
+    assert (markdown_uris, code_uris) == (9, 1)
 
 
 def test_inline_images_fixture_contains_look_alikes() -> None:

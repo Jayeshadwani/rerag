@@ -75,3 +75,14 @@ Approved as written. Implementation notes:
 - Data URIs are replaced before secret scrubbing, because the payload is discarded anyway and
   random base64 can look like a secret; everything that remains is still scrubbed.
 - Applies to markdown cells only. A data URI inside a code cell is code and is left alone.
+
+## Follow-up decision
+
+The first run on the real corpus showed that many markdown cells are nothing but an image. After
+the payload is replaced, such a cell holds only `![alt](data:...;base64,[removed])` (or an
+`<img>` tag), which has no retrievable text. The owner decided that a markdown cell whose only
+content after cleaning is image placeholders, with or without alt text, counts as empty and is
+dropped under the existing empty-cell rule (no ADR text change). It is counted on its own line,
+`image_only_cells_dropped`, separate from `cells_dropped_empty`. A cell is only treated this way
+if a data URI was actually removed from it; a cell that merely contains the text `[removed]` is
+kept. Cells with any other text, such as a caption, are kept.

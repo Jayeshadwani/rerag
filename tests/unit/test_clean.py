@@ -24,12 +24,14 @@ from noterecall.ingest.clean import (
     RulesError,
     clean_notebook,
     clean_outputs,
+    is_image_only,
     load_rules,
     remove_inline_data_uris,
     remove_instructor_notes,
 )
 from noterecall.ingest.ipynb import IpynbLoader
 from noterecall.models import (
+    Cell,
     CellType,
     Notebook,
     OutputKind,
@@ -486,26 +488,118 @@ def test_very_large_payload_is_handled_in_linear_time(rules: CleaningRules) -> N
     assert result.chars == 3_000_000
 
 
+def _kept_by_id(name: str, nb: Notebook) -> dict[str, Cell]:
+    ids = list(_fixture_cells(name))
+    return {ids[cell.index]: cell for cell in nb.cells}
+
+
+IMAGE_ONLY_IDS = ["i2", "i4", "i8", "i9", "i10"]
+
+
 def test_inline_images_fixture_notebook(rules: CleaningRules, tiny_tokenizer: Tokenizer) -> None:
-    nb = _clean_fixture("07_inline_images.ipynb", rules, tiny_tokenizer)
+    name = "07_inline_images.ipynb"
+    nb = _clean_fixture(name, rules, tiny_tokenizer)
     assert nb.counts == {
-        "cells_raw": 8,
-        "inline_data_uri_removed": 5,
-        "inline_data_uri_chars_removed": 628,
+        "cells_raw": 11,
+        "inline_data_uri_removed": 8,
+        "inline_data_uri_chars_removed": 656,  # 400 + 200 + 8 + 8 + 12 + 8 + 8 + 12
+        "image_only_cells_dropped": 5,
     }
-    assert len(nb.cells) == 8  # nothing is dropped: every image cell keeps its markdown
-    by_id = dict(zip(_fixture_cells("07_inline_images.ipynb"), nb.cells, strict=True))
-    assert by_id["i2"].source == "![flow](data:image/png;base64,[removed])"
-    assert by_id["i7"].cell_type is CellType.CODE
-    assert by_id["i7"].source == _fixture_cells("07_inline_images.ipynb")["i7"]  # code untouched
-    # 5 payloads (628 bytes) became "[removed]" (9 bytes each): 628 - 5 * 9 = 583 fewer tokens
-    assert nb.raw_tokens - nb.clean_tokens == 583
+    kept = _kept_by_id(name, nb)
+    assert list(kept) == ["i1", "i3", "i5", "i6", "i7", "i11"]  # image-only cells are gone
+    assert (
+        kept["i3"].source == 'Before <img src="data:image/jpeg;base64,[removed]" width="40"> after'
+    )
+    assert kept["i11"].source == "![fig](data:image/png;base64,[removed])\n\nFigure 1: the flow"
+    assert kept["i7"].cell_type is CellType.CODE
+    assert kept["i7"].source == _fixture_cells(name)["i7"]  # code untouched
+
+
+def test_token_saving_equals_dropped_cells_plus_shortened_payloads(
+    rules: CleaningRules, tiny_tokenizer: Tokenizer
+) -> None:
+    name = "07_inline_images.ipynb"
+    raw = _fixture_cells(name)
+    nb = _clean_fixture(name, rules, tiny_tokenizer)
+    dropped = sum(len(raw[cell_id].encode()) for cell_id in IMAGE_ONLY_IDS)
+    # kept cells with a payload: i3 (200 -> "[removed]" = 9) and i11 (12 -> 9)
+    shortened = (200 - 9) + (12 - 9)
+    assert nb.raw_tokens - nb.clean_tokens == dropped + shortened
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "![](data:image/png;base64,[removed])",
+        "![alt text](data:image/png;base64,[removed])",
+        '<img src="data:image/gif;base64,[removed]" width="10">',
+        "<IMG SRC='data:image/png;base64,[removed]'>",
+        "![a](data:image/png;base64,[removed])\n\n  ![b](data:image/jpeg;base64,[removed])  \n",
+    ],
+)
+def test_image_only_text_is_recognised(rules: CleaningRules, text: str) -> None:
+    assert is_image_only(text, rules.inline_data_uri) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "   \n ",
+        "text only",
+        "![a](data:image/png;base64,[removed]) Figure 1",
+        "Before ![a](data:image/png;base64,[removed])",
+        "![remote](https://example.com/a.png)",
+        "![x](data:image/png;base64,QUJD)",  # payload still present: not a placeholder
+        '<img src="https://example.com/a.png">',
+    ],
+)
+def test_text_that_is_not_only_placeholders_is_not_image_only(
+    rules: CleaningRules, text: str
+) -> None:
+    assert is_image_only(text, rules.inline_data_uri) is False
+
+
+def test_literal_placeholder_text_without_a_removal_is_kept(
+    rules: CleaningRules, tiny_tokenizer: Tokenizer
+) -> None:
+    # No payload was removed from this cell, so it is not treated as "an image that was removed".
+    source = "![x](data:image/png;base64,[removed])"
+    nb = clean_notebook(_markdown_notebook(source), rules, 20, tiny_tokenizer, "p")
+    assert [c.source for c in nb.cells] == [source]
+    assert "image_only_cells_dropped" not in nb.counts
+
+
+def test_image_only_cells_are_counted_separately_from_empty_cells(
+    rules: CleaningRules, tiny_tokenizer: Tokenizer
+) -> None:
+    cells = (
+        RawCell(index=0, cell_type=CellType.MARKDOWN, source=""),
+        RawCell(index=1, cell_type=CellType.MARKDOWN, source="![a](data:image/png;base64,QUJD)"),
+    )
+    raw = RawNotebook(path="x.ipynb", file_hash="f", cells=cells)
+    nb = clean_notebook(raw, rules, 20, tiny_tokenizer, "p")
+    assert nb.cells == ()
+    assert nb.counts["cells_dropped_empty"] == 1
+    assert nb.counts["image_only_cells_dropped"] == 1
+
+
+def test_note_followed_only_by_an_image_drops_the_cell_as_image_only(
+    rules: CleaningRules, tiny_tokenizer: Tokenizer
+) -> None:
+    source = "**Instructor Note:** show this\n\n![a](data:image/png;base64,QUJD)"
+    nb = clean_notebook(_markdown_notebook(source), rules, 20, tiny_tokenizer, "p")
+    assert nb.cells == ()
+    assert nb.counts["instructor_notes"] == 1
+    assert nb.counts["image_only_cells_dropped"] == 1
+    assert "instructor_note_cells_dropped" not in nb.counts
 
 
 def test_raw_hash_still_covers_the_payload(rules: CleaningRules, tiny_tokenizer: Tokenizer) -> None:
-    nb = _clean_fixture("07_inline_images.ipynb", rules, tiny_tokenizer)
-    raw_source = _fixture_cells("07_inline_images.ipynb")["i2"]
-    cell = nb.cells[1]
+    name = "07_inline_images.ipynb"
+    nb = _clean_fixture(name, rules, tiny_tokenizer)
+    cell = _kept_by_id(name, nb)["i3"]
+    raw_source = _fixture_cells(name)["i3"]
     assert cell.raw_hash == hashlib.sha256(raw_source.encode()).hexdigest()
     assert cell.clean_hash != cell.raw_hash
 
@@ -519,14 +613,9 @@ def test_a_secret_shaped_string_inside_a_payload_is_not_reported(
     rules: CleaningRules, tiny_tokenizer: Tokenizer
 ) -> None:
     lookalike = "AKIA" + "ABCDEFGHIJKLMNOP"  # random base64 can look like a key id
-    nb = clean_notebook(
-        _markdown_notebook(f"![x](data:image/png;base64,{lookalike})"),
-        rules,
-        20,
-        tiny_tokenizer,
-        "p",
-    )
-    assert nb.cells[0].source == "![x](data:image/png;base64,[removed])"
+    source = f"Figure 1 ![x](data:image/png;base64,{lookalike})"  # text keeps the cell alive
+    nb = clean_notebook(_markdown_notebook(source), rules, 20, tiny_tokenizer, "p")
+    assert nb.cells[0].source == "Figure 1 ![x](data:image/png;base64,[removed])"
     assert "secrets_aws_access_key_id" not in nb.counts
 
 

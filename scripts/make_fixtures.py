@@ -230,8 +230,10 @@ def instructor_notes() -> NotebookNode:
 def inline_images() -> NotebookNode:
     """Markdown cells with inline base64 data URIs in several shapes, plus look-alikes.
 
-    Cells `i2`, `i3`, `i4`, `i8` hold 5 data URIs in total (payloads of 400, 200, 8, 8 and 12
-    characters = 628). `i5`, `i6` (no payload) and the code cell `i7` must be left alone.
+    Cells `i2`, `i3`, `i4`, `i8`, `i9`, `i10`, `i11` hold 8 data URIs in total (payloads of
+    400, 200, 8, 8, 12, 8, 8 and 12 characters = 656). Cells that are only images (`i2`, `i4`,
+    `i8`, `i9`, `i10`) are dropped after cleaning; `i3` and `i11` keep their text. `i5`, `i6`
+    (no payload) and the code cell `i7` must be left alone.
     """
     p = URI_PAYLOADS
     return _notebook(
@@ -254,6 +256,9 @@ def inline_images() -> NotebookNode:
             ),
             _code("i7", f'img = "data:image/png;base64,{p["png_last"]}"'),
             _md("i8", f"![x](data:image/png;base64,{p['png_last']})"),
+            _md("i9", f"![](data:image/png;base64,{p['gif_short']})"),
+            _md("i10", f'<img src="data:image/gif;base64,{p["png_short"]}" width="10">'),
+            _md("i11", f"![fig](data:image/png;base64,{p['png_last']})\n\nFigure 1: the flow"),
         ]
     )
 

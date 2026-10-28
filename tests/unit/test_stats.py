@@ -65,17 +65,19 @@ def test_fixture_corpus_totals(
 ) -> None:
     stats = compute_stats(synced, settings, _provenance(tiny_tokenizer))
     assert stats.notebooks == 7
-    # raw cells: 6 + 9 + 3 + 6 + 4 + 15 + 8 = 51; dropped: 1 empty (01), 2 emptied notes (06)
-    assert stats.cells_raw == 51
-    # kept markdown 3+7+2+2+2+12+7 = 35, kept code 2+2+1+4+2+1+1 = 13
-    assert stats.cells_kept == {"markdown": 35, "code": 13}
+    # raw cells: 6 + 9 + 3 + 6 + 4 + 15 + 11 = 54; dropped: 1 empty (01), 2 emptied notes (06),
+    # 5 image-only (07)
+    assert stats.cells_raw == 54
+    # kept markdown 3+7+2+2+2+12+5 = 33, kept code 2+2+1+4+2+1+1 = 13
+    assert stats.cells_kept == {"markdown": 33, "code": 13}
     assert stats.removed_by_rule == {
         "cells_dropped_empty": 1,
         "instructor_notes": 8,
         "instructor_note_lines_removed": 24,
         "instructor_note_cells_dropped": 2,
-        "inline_data_uri_removed": 5,  # i2, i3, i4 (two), i8
-        "inline_data_uri_chars_removed": 628,  # 400 + 200 + 8 + 8 + 12
+        "inline_data_uri_removed": 8,  # i2, i3, i4 (two), i8, i9, i10, i11
+        "inline_data_uri_chars_removed": 656,  # 400 + 200 + 8 + 8 + 12 + 8 + 8 + 12
+        "image_only_cells_dropped": 5,  # i2, i4, i8, i9, i10
         "output_image_dropped": 1,
         "output_html_dropped": 0,
         "output_other_dropped": 0,
@@ -96,7 +98,7 @@ def test_distributions_and_token_totals(
     synced: sqlite3.Connection, settings: Settings, tiny_tokenizer: Tokenizer
 ) -> None:
     stats = compute_stats(synced, settings, _provenance(tiny_tokenizer))
-    # kept cells per notebook: 5, 9, 3, 6, 4, 13, 8 -> sorted 3 4 5 6 8 9 13, median 6
+    # kept cells per notebook: 5, 9, 3, 6, 4, 13, 6 -> sorted 3 4 5 6 6 9 13, median 6
     dist = stats.cells_per_notebook
     assert (dist.min, dist.median, dist.max) == (3, 6.0, 13)
     summaries = notebook_summaries(synced)
