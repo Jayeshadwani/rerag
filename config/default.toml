@@ -1,0 +1,10 @@
+# Defaults for M0. Data-decided parameters (ADR-004/005/006/...) are added only
+# when the experiment that decides them has produced a results/*.json file.
+
+[paths]
+raw_dir = "data/raw"
+db_path = "data/noterecall.sqlite"
+results_dir = "results"
+
+[logging]
+level = "INFO"
