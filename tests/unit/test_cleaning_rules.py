@@ -16,7 +16,7 @@ RULES_PATH = Path(__file__).resolve().parents[2] / "config" / "cleaning_rules.ya
 def _rule() -> dict[str, Any]:
     document = yaml.safe_load(RULES_PATH.read_text(encoding="utf-8"))
     assert document["version"] == 1
-    assert [r["id"] for r in document["rules"]] == ["instructor_note"]
+    assert [r["id"] for r in document["rules"]] == ["instructor_note", "inline_data_uri"]
     rule: dict[str, Any] = document["rules"][0]
     return rule
 
@@ -137,7 +137,43 @@ def test_marker_finds_exactly_the_note_cells_in_the_fixture() -> None:
         "03_huge_output.ipynb",
         "04_image_output.ipynb",
         "05_fake_secret.ipynb",
+        "07_inline_images.ipynb",
     ],
 )
 def test_marker_finds_nothing_in_the_other_fixtures(name: str) -> None:
     assert _marker_cells(name) == []
+
+
+def _uri_pattern() -> re.Pattern[str]:
+    document = yaml.safe_load(RULES_PATH.read_text(encoding="utf-8"))
+    rule = next(r for r in document["rules"] if r["id"] == "inline_data_uri")
+    return re.compile(rule["pattern"])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "![a](data:image/png;base64,QUJD)",
+        '<img src="data:image/jpeg;base64,/9j/4AAQ==">',
+        "data:image/svg+xml;base64,PHN2Zz4=",
+        "data:application/pdf;base64,JVBERi0=",
+        "x data:image/x-icon;base64,AAAB y",
+    ],
+)
+def test_uri_pattern_matches_data_uris(text: str) -> None:
+    assert _uri_pattern().search(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "data:image/png;base64, nothing follows the comma",
+        "data:image/png,rawtext",
+        "the data:image/png;base64 syntax",
+        "metadata:image/png;base64,QUJD",
+        "https://example.com/a.png",
+        "database64,QUJD",
+    ],
+)
+def test_uri_pattern_ignores_look_alikes(text: str) -> None:
+    assert _uri_pattern().search(text) is None

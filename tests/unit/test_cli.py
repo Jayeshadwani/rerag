@@ -63,9 +63,9 @@ def test_help_lists_both_commands() -> None:
 def test_sync_then_resync(config: Path) -> None:
     first = runner.invoke(cli.app, ["sync", "--config", str(config)])
     assert first.exit_code == 0, first.stderr
-    assert first.stdout.strip() == "sync: 6 added, 0 updated, 0 unchanged, 0 removed"
+    assert first.stdout.strip() == "sync: 7 added, 0 updated, 0 unchanged, 0 removed"
     second = runner.invoke(cli.app, ["sync", "--config", str(config)])
-    assert second.stdout.strip() == "sync: 0 added, 0 updated, 6 unchanged, 0 removed"
+    assert second.stdout.strip() == "sync: 0 added, 0 updated, 7 unchanged, 0 removed"
 
 
 def test_logs_go_to_stderr_without_file_names(config: Path) -> None:
@@ -83,7 +83,7 @@ def test_stats_writes_the_report_to_the_default_path(config: Path, tmp_path: Pat
     target = tmp_path / "results" / "corpus_stats.json"
     assert result.stdout.strip() == f"stats: wrote {target}"
     stats = CorpusStats.model_validate_json(target.read_text(encoding="utf-8"))
-    assert (stats.notebooks, stats.cells_raw) == (6, 43)
+    assert (stats.notebooks, stats.cells_raw) == (7, 51)
 
 
 def test_stats_honours_out(config: Path, tmp_path: Path) -> None:

@@ -84,7 +84,7 @@ def _pipeline_hash(settings: Settings) -> str:
 def _sync(settings: Settings) -> str:
     tokenizer = load_tokenizer(settings.tokenizer.encoding)
     pipeline = Pipeline(
-        rule=load_rules(settings.cleaning.rules_path),
+        rules=load_rules(settings.cleaning.rules_path),
         max_output_lines=settings.cleaning.max_output_lines,
         tokenizer=tokenizer,
         pipeline_hash=_pipeline_hash(settings),

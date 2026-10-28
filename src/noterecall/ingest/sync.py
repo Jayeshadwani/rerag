@@ -23,7 +23,7 @@ from noterecall.index.store import (
     stored_notebooks,
 )
 from noterecall.ingest import clean, ipynb, secrets
-from noterecall.ingest.clean import InstructorNoteRule, clean_notebook
+from noterecall.ingest.clean import CleaningRules, clean_notebook
 from noterecall.ingest.loader import SourceLoader
 
 log = structlog.get_logger()
@@ -39,7 +39,7 @@ class SyncError(Exception):
 class Pipeline:
     """Everything the cleaner needs, fixed for one sync run."""
 
-    rule: InstructorNoteRule
+    rules: CleaningRules
     max_output_lines: int
     tokenizer: Tokenizer
     pipeline_hash: str
@@ -113,7 +113,7 @@ def _sync_one(run: _Run, path: Path) -> str:
         return "unchanged"
     notebook = clean_notebook(
         run.loader.load(path, run.raw_dir, file_hash),
-        pipeline.rule,
+        pipeline.rules,
         pipeline.max_output_lines,
         pipeline.tokenizer,
         pipeline.pipeline_hash,

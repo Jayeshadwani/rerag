@@ -116,10 +116,11 @@ LLM calls are fixed steps returning schema-validated JSON. No tool-calling loops
 ### ADR-002 — No LangChain / LlamaIndex / RAG frameworks
 Hand-written retrieval, fusion and prompting (~a few hundred lines). *Reason:* every line must be explainable in an interview, and the ablations in ADR-010 need direct control over each stage. Allowed libraries are listed in §5.
 
-### ADR-003 — Two-stage cleaning: deterministic first, LLM optional and verified
-- Deterministic (always on): drop image/HTML/base64 outputs; truncate text outputs to N lines; drop empty cells; remove instructor-note cells/blocks via rules in `config/cleaning_rules.yaml` (rule-based, never LLM); scrub secrets; mark exact-duplicate cells across notebooks.
+### ADR-003 — Two-stage cleaning: deterministic first, LLM optional and verified (amended by proposal 001)
+- Deterministic (always on): drop image/HTML/base64 outputs; replace the payload of inline base64 data URIs in markdown cells with a placeholder, keeping the surrounding markdown (added by proposal 001); truncate text outputs to N lines; drop empty cells; remove instructor-note cells/blocks via rules in `config/cleaning_rules.yaml` (rule-based, never LLM); scrub secrets; mark exact-duplicate cells across notebooks.
 - LLM clean (optional, **markdown cells only**): fixes headings/typos. Verifier rejects output if any identifier/inline-code token from the original is missing, if length ratio leaves [0.7, 1.3], or if a code fence changed. Raw and cleaned text are both stored.
 - **Data-decided:** LLM clean is ON only if it improves dev Recall@10 under the ADR-010 rule. Otherwise it ships OFF and that negative result goes in the README.
+*Amended by proposal 001, `docs/proposals/001-inline-base64-in-markdown.md` (approved by the owner): inline base64 data URIs in markdown cells.*
 
 ### ADR-004 — Structure-aware chunking on cell boundaries
 A chunk = a markdown heading section and its following cells, split on **cell boundaries** when over the token cap; a single oversized code cell is split at blank lines / top-level `def`/`class`. Code and the markdown that explains it stay together. Code cells are never split mid-statement.

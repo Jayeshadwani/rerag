@@ -1,9 +1,11 @@
-"""Deterministic cleaning. Implements ADR-003 (rule-based, never LLM).
+"""Deterministic cleaning. Implements ADR-003 (rule-based, never LLM), as amended by proposal 001.
 
-Per notebook: scrub secrets, drop image/HTML/error outputs, truncate text outputs, remove
-instructor notes (rules in `config/cleaning_rules.yaml`, markdown cells only), drop empty
-cells, and hash each cell. Every removal is counted by rule so `noterecall stats` can report
-it. Secrets are scrubbed before any other step, so no later step ever sees them.
+Per notebook: replace the payload of inline base64 data URIs in markdown cells, scrub secrets,
+drop image/HTML/error outputs, truncate text outputs, remove instructor notes (rules in
+`config/cleaning_rules.yaml`, markdown cells only), drop empty cells, and hash each cell.
+Every removal is counted by rule so `noterecall stats` can report it. Data URIs go first
+because their payload is discarded anyway and random base64 can look like a secret; every
+other piece of text is scrubbed before any later step sees it.
 """
 
 import hashlib
@@ -24,6 +26,8 @@ RULE_KEYS: tuple[str, ...] = (
     "instructor_notes",
     "instructor_note_lines_removed",
     "instructor_note_cells_dropped",
+    "inline_data_uri_removed",
+    "inline_data_uri_chars_removed",
     "output_image_dropped",
     "output_html_dropped",
     "output_other_dropped",
@@ -57,7 +61,7 @@ class _Extent(_Strict):
     extended: _Extended
 
 
-class _RuleSpec(_Strict):
+class _InstructorNoteSpec(_Strict):
     id: Literal["instructor_note"]
     cell_type: Literal["markdown"]
     marker: str
@@ -66,9 +70,19 @@ class _RuleSpec(_Strict):
     drop_cell_if_empty: bool
 
 
+class _InlineDataUriSpec(_Strict):
+    id: Literal["inline_data_uri"]
+    cell_type: Literal["markdown"]
+    pattern: str
+    replacement: str
+
+
+_RuleSpec = Annotated[_InstructorNoteSpec | _InlineDataUriSpec, Field(discriminator="id")]
+
+
 class _RulesFile(_Strict):
     version: Literal[1]
-    rules: Annotated[list[_RuleSpec], Field(min_length=1, max_length=1)]
+    rules: Annotated[list[_RuleSpec], Field(min_length=2, max_length=2)]
 
 
 class InstructorNoteRule(BaseModel):
@@ -91,7 +105,25 @@ def _compile(pattern: str, what: str) -> re.Pattern[str]:
         raise RulesError(f"invalid regex for {what}: {exc}") from exc
 
 
-def _build_rule(spec: _RuleSpec) -> InstructorNoteRule:
+class InlineDataUriRule(BaseModel):
+    """The compiled `inline_data_uri` rule. The pattern has groups `head` and `payload`."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    pattern: re.Pattern[str]
+    replacement: str
+
+
+class CleaningRules(BaseModel):
+    """Every rule loaded from the rules file."""
+
+    model_config = ConfigDict(frozen=True)
+
+    instructor_note: InstructorNoteRule
+    inline_data_uri: InlineDataUriRule
+
+
+def _build_note_rule(spec: _InstructorNoteSpec) -> InstructorNoteRule:
     bare = False
     optional: re.Pattern[str] | None = None
     for condition in spec.extent.extended.when_any:
@@ -111,7 +143,27 @@ def _build_rule(spec: _RuleSpec) -> InstructorNoteRule:
     )
 
 
-def load_rules(path: Path) -> InstructorNoteRule:
+def _build_uri_rule(spec: _InlineDataUriSpec) -> InlineDataUriRule:
+    pattern = _compile(spec.pattern, "inline_data_uri pattern")
+    missing = {"head", "payload"} - set(pattern.groupindex)
+    if missing:
+        raise RulesError(f"inline_data_uri pattern lacks groups: {sorted(missing)}")
+    return InlineDataUriRule(pattern=pattern, replacement=spec.replacement)
+
+
+def _build_rules(parsed: _RulesFile) -> CleaningRules:
+    notes = [spec for spec in parsed.rules if isinstance(spec, _InstructorNoteSpec)]
+    uris = [spec for spec in parsed.rules if isinstance(spec, _InlineDataUriSpec)]
+    if len(notes) != 1 or len(uris) != 1:
+        raise RulesError(
+            "the cleaning rules file must define instructor_note and inline_data_uri exactly once"
+        )
+    return CleaningRules(
+        instructor_note=_build_note_rule(notes[0]), inline_data_uri=_build_uri_rule(uris[0])
+    )
+
+
+def load_rules(path: Path) -> CleaningRules:
     """Read and validate the cleaning rules file."""
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -123,7 +175,7 @@ def load_rules(path: Path) -> InstructorNoteRule:
         parsed = _RulesFile.model_validate(document)
     except ValidationError as exc:
         raise RulesError(f"cleaning rules file {path} is invalid: {exc}") from exc
-    return _build_rule(parsed.rules[0])
+    return _build_rules(parsed)
 
 
 class NoteRemoval(BaseModel):
@@ -217,6 +269,30 @@ def remove_instructor_notes(text: str, rule: InstructorNoteRule) -> NoteRemoval:
     return NoteRemoval(text=cleaned, notes=notes, lines_removed=len(dropped))
 
 
+class DataUriRemoval(BaseModel):
+    """Result of replacing inline data URI payloads in one markdown cell."""
+
+    model_config = ConfigDict(frozen=True)
+
+    text: str
+    removed: int
+    chars: int
+
+
+def remove_inline_data_uris(text: str, rule: InlineDataUriRule) -> DataUriRemoval:
+    """Replace every data URI payload with the placeholder; the rest of the text is untouched."""
+    removed = 0
+    chars = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal removed, chars
+        removed += 1
+        chars += len(match.group("payload"))
+        return match.group("head") + rule.replacement
+
+    return DataUriRemoval(text=rule.pattern.sub(replace, text), removed=removed, chars=chars)
+
+
 def _drop_reason(output: RawOutput) -> str | None:
     return {
         OutputKind.IMAGE: "output_image_dropped",
@@ -258,37 +334,34 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _clean_source(
-    cell: RawCell, rule: InstructorNoteRule, counts: Counter[str]
-) -> tuple[str, bool]:
-    """Scrub and (for markdown) strip notes. Returns the text and whether notes emptied it."""
-    scrubbed = scrub(cell.source)
+def _clean_source(cell: RawCell, rules: CleaningRules, counts: Counter[str]) -> tuple[str, bool]:
+    """Clean a cell's source. Returns the text and whether instructor notes emptied it."""
+    text = cell.source
+    markdown = cell.cell_type is CellType.MARKDOWN
+    if markdown:
+        uris = remove_inline_data_uris(text, rules.inline_data_uri)
+        counts["inline_data_uri_removed"] += uris.removed
+        counts["inline_data_uri_chars_removed"] += uris.chars
+        text = uris.text
+    scrubbed = scrub(text)
     for name, found in scrubbed.counts.items():
         counts[f"secrets_{name}"] += found
-    text = scrubbed.text
-    if cell.cell_type is not CellType.MARKDOWN:
-        return text, False
-    removal = remove_instructor_notes(text, rule)
+    if not markdown:
+        return scrubbed.text, False
+    removal = remove_instructor_notes(scrubbed.text, rules.instructor_note)
     counts["instructor_notes"] += removal.notes
     counts["instructor_note_lines_removed"] += removal.lines_removed
     return removal.text, bool(removal.notes) and not removal.text.strip()
 
 
 def _clean_cell(
-    cell: RawCell, rule: InstructorNoteRule, max_lines: int, counts: Counter[str]
+    cell: RawCell, rules: CleaningRules, max_lines: int, counts: Counter[str]
 ) -> Cell | None:
     """Clean one cell; None if it is dropped."""
-    source, emptied_by_notes = _clean_source(cell, rule, counts)
+    source, emptied_by_notes = _clean_source(cell, rules, counts)
     output_text = clean_outputs(cell.outputs, max_lines, counts)
-    if not source.strip() and not output_text.strip():
-        if emptied_by_notes and not rule.drop_cell_if_empty:
-            return Cell(
-                index=cell.index,
-                cell_type=cell.cell_type,
-                raw_hash=_sha256(cell.source),
-                clean_hash=_sha256(f"{cell.cell_type}\0"),
-                source="",
-            )
+    keep_empty = emptied_by_notes and not rules.instructor_note.drop_cell_if_empty
+    if not source.strip() and not output_text.strip() and not keep_empty:
         counts["instructor_note_cells_dropped" if emptied_by_notes else "cells_dropped_empty"] += 1
         return None
     return Cell(
@@ -311,14 +384,14 @@ def _raw_tokens(cells: tuple[RawCell, ...], tokenizer: Tokenizer) -> int:
 
 def clean_notebook(
     raw: RawNotebook,
-    rule: InstructorNoteRule,
+    rules: CleaningRules,
     max_output_lines: int,
     tokenizer: Tokenizer,
     pipeline_hash: str,
 ) -> Notebook:
     """Apply every deterministic cleaning step to a parsed notebook."""
     counts: Counter[str] = Counter({"cells_raw": len(raw.cells)})
-    cells = [_clean_cell(c, rule, max_output_lines, counts) for c in raw.cells]
+    cells = [_clean_cell(c, rules, max_output_lines, counts) for c in raw.cells]
     kept = tuple(c for c in cells if c is not None)
     clean_tokens = sum(tokenizer.count(c.source) + tokenizer.count(c.output_text) for c in kept)
     return Notebook(

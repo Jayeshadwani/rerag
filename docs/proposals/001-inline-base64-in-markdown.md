@@ -1,7 +1,7 @@
 # Proposal 001: inline base64 images in markdown cells
 
-Status: **open, awaiting owner decision.** Nothing in this proposal is implemented.
-ADR affected: ADR-003 (two-stage cleaning). The ADR is locked; this is a request to extend it.
+Status: **approved by the owner, as written.** Implemented on branch `m1-ingest`.
+ADR affected: ADR-003 (two-stage cleaning), amended in `PLAN.md` and `docs/adr/ADR-003.md`.
 
 ## Problem
 
@@ -64,7 +64,14 @@ under deterministic cleaning, so this matches the stated intent.
 - Risk: a data URI that carries non-image content would also be shortened. In this corpus all
   306 are images.
 
-## Decision needed
+## Decision
 
-Approve the rule as described, approve it with changes, or reject it. Until then M1 ships
-without it, and the stats it would produce are not reported as final.
+Approved as written. Implementation notes:
+
+- Rule `inline_data_uri` in `config/cleaning_rules.yaml`; placeholder `[removed]`; counted as
+  `inline_data_uri_removed` and `inline_data_uri_chars_removed`.
+- The pattern requires a word boundary before `data:` so that a word such as `metadata:` cannot
+  match. This is a precision guard inside the approved rule, not a change to it.
+- Data URIs are replaced before secret scrubbing, because the payload is discarded anyway and
+  random base64 can look like a secret; everything that remains is still scrubbed.
+- Applies to markdown cells only. A data URI inside a code cell is code and is left alone.

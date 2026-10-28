@@ -29,6 +29,15 @@ SHARED_SPLIT_CELL = (
     "X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)"
 )
 
+# Payloads for the inline-image fixture. They are synthetic base64-alphabet strings, not images.
+URI_PAYLOADS = {
+    "png_long": "QUJD" * 100,  # 400 characters
+    "jpeg_mid": "AAAA" * 50,  # 200 characters
+    "gif_short": "R0lGODlh",  # 8 characters
+    "png_short": "iVBORw0K",  # 8 characters
+    "png_last": "QUJDREVGR0g=",  # 12 characters
+}
+
 FAKE_AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"
 FAKE_AWS_SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"  # noqa: S105 (AWS docs example)
 FAKE_ANTHROPIC_KEY = "sk-ant-api03-" + "FAKE" * 10 + "-NOTAREALKEY"
@@ -218,6 +227,37 @@ def instructor_notes() -> NotebookNode:
     )
 
 
+def inline_images() -> NotebookNode:
+    """Markdown cells with inline base64 data URIs in several shapes, plus look-alikes.
+
+    Cells `i2`, `i3`, `i4`, `i8` hold 5 data URIs in total (payloads of 400, 200, 8, 8 and 12
+    characters = 628). `i5`, `i6` (no payload) and the code cell `i7` must be left alone.
+    """
+    p = URI_PAYLOADS
+    return _notebook(
+        [
+            _md("i1", "# Diagrams"),
+            _md("i2", f"![flow](data:image/png;base64,{p['png_long']})"),
+            _md(
+                "i3", f'Before <img src="data:image/jpeg;base64,{p["jpeg_mid"]}" width="40"> after'
+            ),
+            _md(
+                "i4",
+                f"![a](data:image/gif;base64,{p['gif_short']})\n\n"
+                f"![b](data:image/png;base64,{p['png_short']})",
+            ),
+            _md("i5", "![remote](https://example.com/a.png)"),
+            _md(
+                "i6",
+                "The data:image/png;base64 syntax embeds files. "
+                "A prefix like data:text/plain;base64, with no payload is left alone.",
+            ),
+            _code("i7", f'img = "data:image/png;base64,{p["png_last"]}"'),
+            _md("i8", f"![x](data:image/png;base64,{p['png_last']})"),
+        ]
+    )
+
+
 BUILDERS: dict[str, Callable[[], NotebookNode]] = {
     "01_no_headings.ipynb": no_headings,
     "02_deep_headings.ipynb": deep_headings,
@@ -225,6 +265,7 @@ BUILDERS: dict[str, Callable[[], NotebookNode]] = {
     "04_image_output.ipynb": image_output,
     "05_fake_secret.ipynb": fake_secret,
     "06_instructor_notes.ipynb": instructor_notes,
+    "07_inline_images.ipynb": inline_images,
 }
 
 

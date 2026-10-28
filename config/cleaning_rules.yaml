@@ -41,3 +41,13 @@ rules:
 
     # A markdown cell left with no non-blank text after removal is dropped.
     drop_cell_if_empty: true
+
+  # Added by proposal 001 (amends ADR-003). Inline base64 data URIs in markdown cells are
+  # image payloads, not note content. The payload is replaced by a short placeholder; the
+  # mime type, the markdown/HTML around it and any alt text are kept. Applies to markdown
+  # cells only: a data URI inside a code cell is code and is left alone.
+  - id: inline_data_uri
+    cell_type: markdown
+    pattern: |-
+      \b(?P<head>data:[A-Za-z0-9.+/-]+;base64,)(?P<payload>[A-Za-z0-9+/=]+)
+    replacement: "[removed]"

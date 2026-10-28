@@ -34,12 +34,12 @@ from noterecall.ingest.sync import (
 )
 
 RULES_PATH = Path(__file__).resolve().parents[2] / "config" / "cleaning_rules.yaml"
-N_FIXTURES = 6
+N_FIXTURES = 7
 
 
 def _pipeline(tokenizer: Tokenizer, max_lines: int = 20, rules: Path = RULES_PATH) -> Pipeline:
     return Pipeline(
-        rule=load_rules(rules),
+        rules=load_rules(rules),
         max_output_lines=max_lines,
         tokenizer=tokenizer,
         pipeline_hash=compute_pipeline_hash(rules, max_lines, tokenizer.name),
@@ -266,3 +266,14 @@ def test_pipeline_hash_reacts_to_every_input(
     stub.write_text("changed = True\n", encoding="utf-8")
     monkeypatch.setattr(sync_module, "clean", types.SimpleNamespace(__file__=str(stub)))
     assert base != compute_pipeline_hash(RULES_PATH, 20, "enc")
+
+
+def test_inline_image_payloads_never_reach_the_database_file(
+    raw_dir: Path, db_path: Path, tiny_tokenizer: Tokenizer
+) -> None:
+    conn, _ = _run(raw_dir, db_path, _pipeline(tiny_tokenizer))
+    conn.close()
+    data = b"".join(p.read_bytes() for p in db_path.parent.iterdir())
+    assert b"data:image/png;base64,[removed]" in data  # the placeholder is stored
+    assert b"QUJD" * 10 not in data  # the 400-character payload is not
+    assert b"AAAA" * 10 not in data  # nor the 200-character one

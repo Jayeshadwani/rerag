@@ -30,7 +30,7 @@ GIT = GitState(sha="a" * 40, dirty=False)
 
 def _pipeline(tokenizer: Tokenizer) -> Pipeline:
     return Pipeline(
-        rule=load_rules(RULES_PATH),
+        rules=load_rules(RULES_PATH),
         max_output_lines=20,
         tokenizer=tokenizer,
         pipeline_hash=compute_pipeline_hash(RULES_PATH, 20, tokenizer.name),
@@ -64,16 +64,18 @@ def test_fixture_corpus_totals(
     synced: sqlite3.Connection, settings: Settings, tiny_tokenizer: Tokenizer
 ) -> None:
     stats = compute_stats(synced, settings, _provenance(tiny_tokenizer))
-    assert stats.notebooks == 6
-    # raw cells: 6 + 9 + 3 + 6 + 4 + 15 = 43; dropped: 1 empty (01), 2 emptied notes (06)
-    assert stats.cells_raw == 43
-    # kept markdown 3+7+2+2+2+12 = 28, kept code 2+2+1+4+2+1 = 12
-    assert stats.cells_kept == {"markdown": 28, "code": 12}
+    assert stats.notebooks == 7
+    # raw cells: 6 + 9 + 3 + 6 + 4 + 15 + 8 = 51; dropped: 1 empty (01), 2 emptied notes (06)
+    assert stats.cells_raw == 51
+    # kept markdown 3+7+2+2+2+12+7 = 35, kept code 2+2+1+4+2+1+1 = 13
+    assert stats.cells_kept == {"markdown": 35, "code": 13}
     assert stats.removed_by_rule == {
         "cells_dropped_empty": 1,
         "instructor_notes": 8,
         "instructor_note_lines_removed": 24,
         "instructor_note_cells_dropped": 2,
+        "inline_data_uri_removed": 5,  # i2, i3, i4 (two), i8
+        "inline_data_uri_chars_removed": 628,  # 400 + 200 + 8 + 8 + 12
         "output_image_dropped": 1,
         "output_html_dropped": 0,
         "output_other_dropped": 0,
@@ -94,9 +96,9 @@ def test_distributions_and_token_totals(
     synced: sqlite3.Connection, settings: Settings, tiny_tokenizer: Tokenizer
 ) -> None:
     stats = compute_stats(synced, settings, _provenance(tiny_tokenizer))
-    # kept cells per notebook: 5, 9, 3, 6, 4, 13 -> sorted 3 4 5 6 9 13, median (5+6)/2
+    # kept cells per notebook: 5, 9, 3, 6, 4, 13, 8 -> sorted 3 4 5 6 8 9 13, median 6
     dist = stats.cells_per_notebook
-    assert (dist.min, dist.median, dist.max) == (3, 5.5, 13)
+    assert (dist.min, dist.median, dist.max) == (3, 6.0, 13)
     summaries = notebook_summaries(synced)
     assert stats.tokens.raw == sum(s.raw_tokens for s in summaries)
     assert stats.tokens.clean == sum(s.clean_tokens for s in summaries)
@@ -113,7 +115,7 @@ def test_report_contains_no_text_or_file_names(
     text = out.read_text(encoding="utf-8")
     for forbidden in ("no_headings", ".ipynb", "Sorting", "groupby", "FAKEFAKE", "AKIA"):
         assert forbidden not in text
-    assert CorpusStats.model_validate_json(text).notebooks == 6
+    assert CorpusStats.model_validate_json(text).notebooks == 7
     assert text.endswith("}\n")
 
 

@@ -34,10 +34,10 @@ def _hash(source: str) -> str:
     return hashlib.sha256(source.encode()).hexdigest()
 
 
-def test_there_are_exactly_the_six_fixtures() -> None:
+def test_there_are_exactly_the_seven_fixtures() -> None:
     on_disk = sorted(p.name for p in FIXTURE_DIR.glob("*.ipynb"))
     assert on_disk == sorted(BUILDERS)
-    assert len(on_disk) == 6
+    assert len(on_disk) == 7
 
 
 def test_committed_files_match_generator(tmp_path: Path) -> None:
@@ -115,3 +115,16 @@ def test_fake_secrets_are_the_documented_synthetic_values() -> None:
 def test_cell_ids_are_unique_within_each_notebook(name: str) -> None:
     ids = [c.id for c in _load(name).cells]
     assert len(ids) == len(set(ids))
+
+
+def test_inline_images_fixture_has_data_uris_in_markdown_and_code() -> None:
+    nb = _load("07_inline_images.ipynb")
+    markdown_uris = sum(src.count("base64,") for src in _sources(nb, "markdown"))
+    code_uris = sum(src.count("base64,") for src in _sources(nb, "code"))
+    assert (markdown_uris, code_uris) == (6, 1)  # i2, i3, i4 (two), i8 + the i6 prefix; i7 in code
+
+
+def test_inline_images_fixture_contains_look_alikes() -> None:
+    sources = _sources(_load("07_inline_images.ipynb"), "markdown")
+    assert any("https://example.com/a.png" in s for s in sources)
+    assert any("with no payload" in s for s in sources)
