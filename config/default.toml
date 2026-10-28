@@ -8,3 +8,10 @@ results_dir = "results"
 
 [logging]
 level = "INFO"
+
+[cleaning]
+rules_path = "config/cleaning_rules.yaml"
+max_output_lines = 20
+
+[tokenizer]
+encoding = "cl100k_base"

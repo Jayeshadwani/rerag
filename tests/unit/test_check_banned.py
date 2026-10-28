@@ -211,3 +211,37 @@ def test_main_exit_codes_and_output(tmp_path: Path, capsys: pytest.CaptureFixtur
 
 def test_real_src_tree_is_clean() -> None:
     assert scan(REPO_SRC) == []
+
+
+def _function_with_body_lines(count: int, docstring: str = "") -> str:
+    body = "".join("    x = 1\n" for _ in range(count))
+    return f"def f() -> None:\n{docstring}{body}"
+
+
+def test_function_body_of_exactly_forty_lines_is_allowed(tmp_path: Path) -> None:
+    assert _violations(tmp_path, _function_with_body_lines(40)) == []
+
+
+def test_function_body_of_forty_one_lines_is_caught(tmp_path: Path) -> None:
+    assert _violations(tmp_path, _function_with_body_lines(41)) == [
+        (1, "function 'f' body is 41 lines (max 40)")
+    ]
+
+
+def test_docstring_lines_do_not_count_towards_the_limit(tmp_path: Path) -> None:
+    docstring = '    """' + "\n".join(f"line {i}" for i in range(30)) + '\n    """\n'
+    assert _violations(tmp_path, _function_with_body_lines(40, docstring)) == []
+
+
+def test_long_async_and_nested_functions_are_measured(tmp_path: Path) -> None:
+    source = "async def g() -> None:\n" + "".join("    x = 1\n" for _ in range(41))
+    assert _violations(tmp_path, source) == [(1, "function 'g' body is 41 lines (max 40)")]
+    nested = "def outer() -> None:\n    def inner() -> None:\n" + "".join(
+        "        y = 1\n" for _ in range(41)
+    )
+    found = _violations(tmp_path, nested)
+    # inner has 41 lines; outer's body (the nested def) spans 42 lines -> both are reported
+    assert [message for _, message in found] == [
+        "function 'outer' body is 42 lines (max 40)",
+        "function 'inner' body is 41 lines (max 40)",
+    ]

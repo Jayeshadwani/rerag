@@ -9,17 +9,23 @@ description = "Revision planner over personal notebooks: hybrid retrieval, groun
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "nbformat==5.11.1",
     "pydantic==2.14.1",
     "pydantic-settings==2.16.2",
+    "pyyaml==6.0.3",
+    "structlog==26.1.0",
+    "tiktoken==0.14.0",
+    "typer==0.27.3",
 ]
+
+[project.scripts]
+noterecall = "noterecall.cli:app"
 
 [dependency-groups]
 dev = [
     "mypy==2.4.0",
-    "nbformat==5.11.1",
     "pytest==9.2.0",
     "pytest-cov==7.1.0",
-    "pyyaml==6.0.3",
     "ruff==0.17.3",
 ]
 

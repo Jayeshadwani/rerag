@@ -1,0 +1,137 @@
+"""Command line interface. Infrastructure; no ADR.
+
+`noterecall sync` brings the database in line with the raw notebook directory (ADR-003,
+ADR-015). `noterecall stats` writes the aggregate corpus report to
+`results/corpus_stats.json`. Known failures print one line to stderr and exit with code 1;
+unexpected errors are not caught.
+"""
+
+import sqlite3
+import sys
+from pathlib import Path
+from typing import Annotated
+
+import structlog
+import typer
+
+from noterecall.chunking.tokens import TokenizerError, load_tokenizer
+from noterecall.config import ConfigError, Settings, load_settings
+from noterecall.index.store import StoreError, connect
+from noterecall.ingest.clean import RulesError, load_rules
+from noterecall.ingest.ipynb import IpynbLoader, NotebookParseError
+from noterecall.ingest.stats import Provenance, StatsError, compute_stats, git_state, write_stats
+from noterecall.ingest.sync import (
+    Pipeline,
+    SyncError,
+    compute_pipeline_hash,
+    file_sha256,
+)
+from noterecall.ingest.sync import (
+    sync as run_sync,
+)
+
+KNOWN_ERRORS = (
+    ConfigError,
+    NotebookParseError,
+    RulesError,
+    StatsError,
+    StoreError,
+    SyncError,
+    TokenizerError,
+)
+
+app = typer.Typer(no_args_is_help=True, add_completion=False, help="NoteRecall command line.")
+
+ConfigOption = Annotated[
+    Path | None,
+    typer.Option("--config", help="Config TOML to use instead of config/default.toml."),
+]
+
+
+def configure_logging(level: str) -> None:
+    """Key-value logs to stderr. No exception renderer that prints local variables."""
+    structlog.configure(
+        processors=[
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.KeyValueRenderer(key_order=["timestamp", "level", "event"]),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(level),
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+        cache_logger_on_first_use=False,
+    )
+
+
+def _settings(config: Path | None) -> Settings:
+    settings = load_settings(config)
+    configure_logging(settings.logging.level)
+    return settings
+
+
+def _fail(exc: Exception) -> typer.Exit:
+    typer.echo(f"error: {exc}", err=True)
+    return typer.Exit(code=1)
+
+
+def _pipeline_hash(settings: Settings) -> str:
+    return compute_pipeline_hash(
+        settings.cleaning.rules_path,
+        settings.cleaning.max_output_lines,
+        settings.tokenizer.encoding,
+    )
+
+
+def _sync(settings: Settings) -> str:
+    tokenizer = load_tokenizer(settings.tokenizer.encoding)
+    pipeline = Pipeline(
+        rule=load_rules(settings.cleaning.rules_path),
+        max_output_lines=settings.cleaning.max_output_lines,
+        tokenizer=tokenizer,
+        pipeline_hash=_pipeline_hash(settings),
+    )
+    conn: sqlite3.Connection = connect(settings.paths.db_path)
+    try:
+        report = run_sync(settings.paths.raw_dir, conn, IpynbLoader(), pipeline)
+    finally:
+        conn.close()
+    return (
+        f"sync: {report.added} added, {report.updated} updated, "
+        f"{report.unchanged} unchanged, {report.removed} removed"
+    )
+
+
+@app.command()
+def sync(config: ConfigOption = None) -> None:
+    """Sync the raw notebook directory into the database (incremental)."""
+    try:
+        typer.echo(_sync(_settings(config)))
+    except KNOWN_ERRORS as exc:
+        raise _fail(exc) from exc
+
+
+def _stats(settings: Settings, out: Path | None) -> str:
+    provenance = Provenance(
+        pipeline_hash=_pipeline_hash(settings),
+        rules_sha256=file_sha256(settings.cleaning.rules_path),
+        tokenizer_name=settings.tokenizer.encoding,
+        git=git_state(),
+    )
+    target = out if out is not None else settings.paths.results_dir / "corpus_stats.json"
+    conn = connect(settings.paths.db_path)
+    try:
+        write_stats(compute_stats(conn, settings, provenance), target)
+    finally:
+        conn.close()
+    return f"stats: wrote {target}"
+
+
+@app.command()
+def stats(
+    config: ConfigOption = None,
+    out: Annotated[Path | None, typer.Option("--out", help="Output JSON path.")] = None,
+) -> None:
+    """Write the aggregate corpus report (no note text, no file names)."""
+    try:
+        typer.echo(_stats(_settings(config), out))
+    except KNOWN_ERRORS as exc:
+        raise _fail(exc) from exc

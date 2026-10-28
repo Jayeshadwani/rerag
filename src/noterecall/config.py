@@ -11,7 +11,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -43,6 +43,23 @@ class LoggingConfig(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 
 
+class CleaningConfig(BaseModel):
+    """Deterministic cleaning parameters (ADR-003)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rules_path: Path
+    max_output_lines: int = Field(ge=1)
+
+
+class TokenizerConfig(BaseModel):
+    """The single tokenizer used everywhere (PLAN section 5)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    encoding: str
+
+
 class Settings(BaseSettings):
     """Validated application settings."""
 
@@ -55,6 +72,8 @@ class Settings(BaseSettings):
 
     paths: PathsConfig
     logging: LoggingConfig
+    cleaning: CleaningConfig
+    tokenizer: TokenizerConfig
 
     @classmethod
     def settings_customise_sources(
