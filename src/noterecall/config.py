@@ -87,6 +87,3 @@ def load_settings(config_path: Path | None = None) -> Settings:
         return Settings(**data)
     except ValidationError as exc:
         raise ConfigError(f"invalid configuration from {path} and environment: {exc}") from exc
-
-
-# TODO: planted to prove the banned-pattern check fails
