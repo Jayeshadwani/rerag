@@ -1,0 +1,43 @@
+# Deterministic cleaning rules (ADR-003): rule-based, never LLM.
+# Patterns only. This file contains no text taken from any notebook.
+#
+# Rule `instructor_note` removes teaching-only notes addressed to the instructor,
+# which are not part of the subject content. Regexes are Python `re` syntax and are
+# applied line by line to markdown cells.
+version: 1
+rules:
+  - id: instructor_note
+    cell_type: markdown
+
+    # A note starts on a line that, after optional wrappers (blockquote `>`, list bullet,
+    # emphasis `*`/`_`, backticks, `[`, and <span>/<font> tags), begins with one of two
+    # labels: "Note to Instructor" or "Instructor('s) Note(s)". The label must open the
+    # line, so "instructor ratings" or "Transformers Trainer" in running text do not match.
+    marker: |-
+      (?im)^(?:[ \t>*_`\[+-]|<(?:span|font)\b[^>\n]*>)*(?:note[ \t]+to[ \t]+(?:the[ \t]+)?instructors?|instructor(?:['’]s)?[ \t]+notes?)\b
+
+    extent:
+      # Default: the marker line through the end of its paragraph (up to the next blank line).
+      default: paragraph
+      # Long-body notes: the marker line through the line before the first stop line,
+      # or through the end of the cell if there is none. Applies when ANY condition holds.
+      extended:
+        when_any:
+          # The marker line is the only line of its paragraph and nothing but the label
+          # (tags, emphasis, punctuation, &nbsp; ignored) follows the marker on it.
+          - bare_label
+          # The rest of the marker line says the note is optional / reference-only.
+          - rest_of_line_matches: |-
+              (?i)\b(?:optional|ref(?:e)?rence only|just for ref(?:e)?rence)\b
+        stop_before:
+          - |-
+            ^\s{0,3}#{1,6}\s
+          - |-
+            ^\s*---+\s*$
+
+    # If the marker line is itself a list item (`-`, `*`, `+` or `1.`), the note ends before the
+    # next list item at the same or shallower indentation, so sibling bullets are never removed.
+    list_item_scope: true
+
+    # A markdown cell left with no non-blank text after removal is dropped.
+    drop_cell_if_empty: true

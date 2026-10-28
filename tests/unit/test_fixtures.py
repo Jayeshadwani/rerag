@@ -34,10 +34,10 @@ def _hash(source: str) -> str:
     return hashlib.sha256(source.encode()).hexdigest()
 
 
-def test_there_are_exactly_the_five_fixtures() -> None:
+def test_there_are_exactly_the_six_fixtures() -> None:
     on_disk = sorted(p.name for p in FIXTURE_DIR.glob("*.ipynb"))
     assert on_disk == sorted(BUILDERS)
-    assert len(on_disk) == 5
+    assert len(on_disk) == 6
 
 
 def test_committed_files_match_generator(tmp_path: Path) -> None:

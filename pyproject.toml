@@ -19,6 +19,7 @@ dev = [
     "nbformat==5.11.1",
     "pytest==9.2.0",
     "pytest-cov==7.1.0",
+    "pyyaml==6.0.3",
     "ruff==0.17.3",
 ]
 
@@ -50,6 +51,11 @@ plugins = ["pydantic.mypy"]
 mypy_path = "scripts"
 # nbformat ships no type hints; calls into it are the only untyped calls we allow.
 untyped_calls_exclude = ["nbformat"]
+
+[[tool.mypy.overrides]]
+# PyYAML ships no type hints and the project may not add stub packages (PLAN section 5).
+module = ["yaml"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

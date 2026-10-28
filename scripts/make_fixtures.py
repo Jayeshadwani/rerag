@@ -149,12 +149,82 @@ def fake_secret() -> NotebookNode:
     )
 
 
+def instructor_notes() -> NotebookNode:
+    """One cell per instructor-note style, plus look-alikes that must NOT be treated as notes.
+
+    All wording is invented; only the markup patterns mirror the styles found in real notebooks.
+    Cell ids starting with `n` are notes, `k` are cells that must be left alone.
+    """
+    return _notebook(
+        [
+            _md("k1", "# Sorting basics"),
+            _md(
+                "n2",
+                '<span style="background-color: red;"> **[Note to Instructor]:** </span> '
+                "Pause here and let the group try it first.",
+            ),
+            _md(
+                "n3",
+                "Sorting arranges items in order.\n\n"
+                "<span style=background-color:red>**Instructor Note:**</span> "
+                "Mention stability.\n\n"
+                "Stable means equal items keep their original order.",
+            ),
+            _md(
+                "n4",
+                "> **Instructor Note:**\n- Draw the two lists on the board.\n"
+                "- Keep this under two minutes.\n\nNow compare the two approaches.",
+            ),
+            _md(
+                "n5",
+                "Next, complexity.\n\n<font color='red'> Instructor Note </font>\n\n"
+                "Do not derive the bound in class.\n\nPoint to the reading list instead.",
+            ),
+            _md(
+                "n6",
+                "### Space usage\n\n<FONT color=red>Instructor Note:</FONT>\n\n"
+                "Skip this slide if time is short.\n\n---\n\n"
+                "In-place sorts reuse the input list.",
+            ),
+            _md(
+                "n7",
+                "> <font color='red'>INSTRUCTOR NOTES - Optional</font>\n\n"
+                "**Why merge sort?**\n\nIt is a classic divide and conquer example.\n\n"
+                "## Quick recap\n\nSorting is everywhere.",
+            ),
+            _md(
+                "n8",
+                "> **<font color='red'>INSTRUCTOR NOTES</font> refrence only**\n\n"
+                "A longer derivation lives in the appendix.",
+            ),
+            _md(
+                "n9",
+                "Steps:\n- Pick a pivot\n"
+                '    - <span style="background-color: red;"> **[Note to Instructor]:**</span> '
+                "Show the animation here.\n"
+                "- Partition the rest\n- Recurse on both halves",
+            ),
+            _md("k2", "- Checking instructor ratings helps choose a course."),
+            _md("k3", "Fine-tune the model with the Transformers Trainer class."),
+            _md("k4", "The instructor notes are posted on the course page."),
+            _md(
+                "k5",
+                '<span style="background-color: red;"> **[Ask Learners]:** </span> '
+                "Which sort would you pick?",
+            ),
+            _md("k6", '<span style="color: red;"> **Note:** </span> Python lists are mutable.'),
+            _code("k7", "# Instructor note: this comment is inside a code cell"),
+        ]
+    )
+
+
 BUILDERS: dict[str, Callable[[], NotebookNode]] = {
     "01_no_headings.ipynb": no_headings,
     "02_deep_headings.ipynb": deep_headings,
     "03_huge_output.ipynb": huge_output,
     "04_image_output.ipynb": image_output,
     "05_fake_secret.ipynb": fake_secret,
+    "06_instructor_notes.ipynb": instructor_notes,
 }
 
 
