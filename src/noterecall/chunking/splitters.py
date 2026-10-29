@@ -164,11 +164,3 @@ def sentence_spans(text: str, span: Span) -> list[Span]:
     ]
     bounds = [span.start, *cuts, span.end]
     return [Span(a, b) for a, b in itertools.pairwise(bounds)]
-
-
-def line_spans(text: str) -> list[Span]:
-    """One span per line, each including its newline."""
-    starts = _line_starts(text)
-    bounds = [*starts, len(text)]
-    spans = [Span(a, b) for a, b in itertools.pairwise(bounds) if b > a]
-    return spans or [Span(0, len(text))]

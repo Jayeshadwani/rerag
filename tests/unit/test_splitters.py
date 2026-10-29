@@ -9,7 +9,6 @@ from noterecall.chunking.splitters import (
     Heading,
     Span,
     code_statement_spans,
-    line_spans,
     markdown_blocks,
     markdown_headings,
     sentence_spans,
@@ -144,13 +143,6 @@ def test_sentence_split_respects_the_given_span() -> None:
 def test_no_split_before_lowercase_or_inside_numbers() -> None:
     text = "It costs 3.5 dollars e.g. a lot. but see v2.0 now"
     assert len(sentence_spans(text, Span(0, len(text)))) == 1
-
-
-def test_line_spans_keep_newlines() -> None:
-    text = "a\nbb\n\nccc"
-    assert _slices(text, line_spans(text)) == ["a\n", "bb\n", "\n", "ccc"]
-    assert line_spans("") == [Span(0, 0)]
-    assert _slices("x\n", line_spans("x\n")) == ["x\n"]
 
 
 def test_a_closing_fence_may_be_indented_at_most_three_spaces() -> None:

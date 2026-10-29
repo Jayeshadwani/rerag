@@ -25,6 +25,7 @@ from noterecall.models import (
     Chunk,
     OutputMode,
     OversizeReason,
+    Piece,
     PieceKind,
     PieceUnit,
 )
@@ -179,13 +180,23 @@ def expected_parts(cell: Cell, mode: OutputMode) -> dict[PieceKind, str]:
         parts[PieceKind.CODE if cell.cell_type is CellType.CODE else PieceKind.MARKDOWN] = (
             cell.source
         )
-    wanted = cell.output_text.strip() and (
-        mode is OutputMode.ALL
-        or (mode is OutputMode.EVIDENCE and is_evidence_output(cell.output_text, TOKENIZER))
+    wanted = (
+        cell.source.strip()
+        and cell.output_text.strip()
+        and (
+            mode is OutputMode.ALL
+            or (mode is OutputMode.EVIDENCE and is_evidence_output(cell.output_text, TOKENIZER))
+        )
     )
     if wanted:
         parts[PieceKind.OUTPUT] = cell.output_text
     return parts
+
+
+def output_fits_with_its_code(cell: Cell, pieces: list[Piece], cap: int) -> bool:
+    """Would the cell's output fit under the cap together with the last piece of its code?"""
+    code = [p for p in pieces if p.cell_index == cell.index and p.kind is PieceKind.CODE]
+    return TOKENIZER.count(code[-1].text.strip("\n") + "\n\n" + cell.output_text.strip("\n")) <= cap
 
 
 def pieces_of(chunks: list[Chunk]):  # type: ignore[no-untyped-def]  # noqa: ANN201
@@ -211,11 +222,15 @@ def test_every_cell_is_covered_exactly_once(cells: list[Cell], cap: int, mode: O
     for cell in cells:
         for kind, text in expected_parts(cell, mode).items():
             mine = [p for p in pieces if p.cell_index == cell.index and p.kind is kind]
+            if kind is PieceKind.OUTPUT and not mine:
+                assert not output_fits_with_its_code(cell, pieces, cap)  # only dropped if too big
+                continue
             assert [p.part for p in mine] == list(range(len(mine)))
             assert "".join(p.text for p in mine) == text
     covered = {(p.cell_index, p.kind) for p in pieces}
     wanted = {(c.index, k) for c in cells for k in expected_parts(c, mode)}
-    assert covered == wanted  # nothing extra, nothing missing
+    assert covered <= wanted  # nothing extra
+    assert {k for k in wanted - covered if k[1] is not PieceKind.OUTPUT} == set()  # no code lost
     order = [(p.cell_index, list(PieceKind).index(p.kind), p.part) for p in pieces]
     assert order == sorted(order)  # document order, code before its output
 
@@ -228,7 +243,6 @@ def test_no_chunk_is_over_the_cap_unless_it_is_one_flagged_indivisible_piece(
         PieceUnit.STATEMENT: OversizeReason.STATEMENT,
         PieceUnit.SENTENCE: OversizeReason.SENTENCE,
         PieceUnit.FENCED_BLOCK: OversizeReason.FENCED_BLOCK,
-        PieceUnit.OUTPUT_LINE: OversizeReason.OUTPUT_LINE,
         PieceUnit.UNPARSED_CODE: OversizeReason.UNPARSED_CODE,
     }
     for chunk in chunk_notebook("nb", cells, cap, TOKENIZER, mode):
@@ -332,7 +346,13 @@ def test_greedy_packing_leaves_no_mergeable_neighbours(
             and first.kind is not PieceKind.OUTPUT
         ):
             continue  # the next chunk starts a new section
-        assert TOKENIZER.count(render([*left.pieces, first])) > cap
+        movable = (
+            right.pieces[:2]
+            if right.pieces[1:2] and right.pieces[1].kind is PieceKind.OUTPUT
+            else right.pieces[:1]
+        )
+        # a code piece and its output move together, so they must not fit on the left as a pair
+        assert TOKENIZER.count(render([*left.pieces, *movable])) > cap
 
 
 @given(notebooks(), CAPS)
@@ -341,7 +361,7 @@ def test_output_modes_select_outputs(cells: list[Cell], cap: int) -> None:
     assert all(p.kind is not PieceKind.OUTPUT for p in none)
     everything = pieces_of(chunk_notebook("nb", cells, cap, TOKENIZER, OutputMode.ALL))
     with_output = {c.index for c in cells if c.output_text.strip()}
-    assert {p.cell_index for p in everything if p.kind is PieceKind.OUTPUT} == with_output
+    assert {p.cell_index for p in everything if p.kind is PieceKind.OUTPUT} <= with_output
     evidence = {
         p.cell_index
         for p in pieces_of(chunk_notebook("nb", cells, cap, TOKENIZER, OutputMode.EVIDENCE))
@@ -390,3 +410,28 @@ def test_every_cell_with_text_is_touched_by_some_fixed_window(
     for chunk in chunks:
         for piece in chunk.pieces:
             assert piece.text in chunk.text
+
+
+@given(notebooks(), CAPS, st.sampled_from([OutputMode.ALL, OutputMode.EVIDENCE]))
+@example(
+    [_cell(0, True, "a = 1", ""), _cell(1, True, "b = 2", "2")], 12, OutputMode.ALL
+)  # the output would start a new chunk, so its code travels with it
+@example([_cell(0, True, "", "42")], 100, OutputMode.ALL)  # a bare number: no code above it
+def test_an_output_always_directly_follows_the_code_that_produced_it(
+    cells: list[Cell], cap: int, mode: OutputMode
+) -> None:
+    """Never a chunk's first piece, never apart from its code, never split: a bare output is
+    impossible."""
+    chunks = chunk_notebook("nb", cells, cap, TOKENIZER, mode)
+    last_code = {}
+    for p in pieces_of(chunks):
+        if p.kind is PieceKind.CODE:
+            last_code[p.cell_index] = p
+    for chunk in chunks:
+        for i, piece in enumerate(chunk.pieces):
+            if piece.kind is not PieceKind.OUTPUT:
+                continue
+            assert i > 0  # not the first piece
+            assert chunk.pieces[i - 1] == last_code[piece.cell_index]  # directly after its code
+            assert piece.part == 0  # whole output, one piece
+            assert piece.unit is PieceUnit.CELL

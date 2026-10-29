@@ -95,14 +95,13 @@ class PieceKind(StrEnum):
 
 
 class PieceUnit(StrEnum):
-    """The unit a piece was cut at. The last five are the smallest (indivisible) units."""
+    """The unit a piece was cut at. Statements, sentences, fences and unparsed code are atoms."""
 
     CELL = "cell"
     PARAGRAPH = "paragraph"
     STATEMENT = "statement"
     SENTENCE = "sentence"
     FENCED_BLOCK = "fenced_block"
-    OUTPUT_LINE = "output_line"
     UNPARSED_CODE = "unparsed_code"
     WINDOW = "window"
 
@@ -113,7 +112,6 @@ class OversizeReason(StrEnum):
     STATEMENT = "statement"
     SENTENCE = "sentence"
     FENCED_BLOCK = "fenced_block"
-    OUTPUT_LINE = "output_line"
     UNPARSED_CODE = "unparsed_code"
 
 

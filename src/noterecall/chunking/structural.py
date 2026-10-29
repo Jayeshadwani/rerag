@@ -5,7 +5,10 @@ blocks); a cell is never split across sections. Within a section, cells are pack
 order, into chunks of at most `cap` tokens, counted on the rendered chunk text. A cell that alone
 exceeds the cap is cut into pieces (statements, or paragraphs then sentences, with fenced blocks
 kept whole). A chunk may exceed the cap only if it is one indivisible piece; it is then flagged.
-Outputs are included according to `OutputMode` (excluded by default).
+Outputs are included according to `OutputMode` (excluded by default). An output is one piece
+that always sits directly after the code piece that produced it, in the same chunk: it is never a
+chunk's first piece and never split from its code. An output that cannot fit under the cap
+together with that code piece is left out (when in doubt, exclude).
 """
 
 import hashlib
@@ -17,7 +20,6 @@ from noterecall.chunking.evidence import is_evidence_output
 from noterecall.chunking.splitters import (
     Heading,
     code_statement_spans,
-    line_spans,
     markdown_blocks,
     markdown_headings,
     sentence_spans,
@@ -34,13 +36,12 @@ from noterecall.models import (
     PieceUnit,
 )
 
-CHUNKER = "structural-1"
+CHUNKER = "structural-2"
 
 _REASONS = {
     PieceUnit.STATEMENT: OversizeReason.STATEMENT,
     PieceUnit.SENTENCE: OversizeReason.SENTENCE,
     PieceUnit.FENCED_BLOCK: OversizeReason.FENCED_BLOCK,
-    PieceUnit.OUTPUT_LINE: OversizeReason.OUTPUT_LINE,
     PieceUnit.UNPARSED_CODE: OversizeReason.UNPARSED_CODE,
 }
 
@@ -146,14 +147,12 @@ class _Splitter:
             )
         return pieces
 
-    def output(self, cell: Cell) -> list[Piece]:
-        text, kind = cell.output_text, PieceKind.OUTPUT
-        if self.fits(text):
-            return [self._piece(cell, kind, 0, PieceUnit.CELL, text)]
-        return [
-            self._piece(cell, kind, i, PieceUnit.OUTPUT_LINE, text[s.start : s.end])
-            for i, s in enumerate(line_spans(text))
-        ]
+    def output(self, cell: Cell, code: Piece) -> list[Piece]:
+        """The cell's output as one piece, or none if it does not fit with its code piece."""
+        piece = self._piece(cell, PieceKind.OUTPUT, 0, PieceUnit.CELL, cell.output_text)
+        if self.tokenizer.count(render([code, piece])) > self.cap:
+            return []
+        return [piece]
 
 
 def wants_output(cell: Cell, mode: OutputMode, tokenizer: Tokenizer) -> bool:
@@ -163,24 +162,36 @@ def wants_output(cell: Cell, mode: OutputMode, tokenizer: Tokenizer) -> bool:
 
 
 def cell_pieces(cell: Cell, splitter: _Splitter, mode: OutputMode) -> list[Piece]:
-    """All pieces of one cell, in order: its source, then (per `mode`) its output."""
-    pieces: list[Piece] = []
-    if cell.source.strip():
-        cut = splitter.code if cell.cell_type is CellType.CODE else splitter.markdown
-        pieces.extend(cut(cell))
-    if wants_output(cell, mode, splitter.tokenizer):
-        pieces.extend(splitter.output(cell))
+    """All pieces of one cell, in order: its source, then (per `mode`) its output.
+
+    An output exists only after code: a cell with no code yields no output piece.
+    """
+    if not cell.source.strip():
+        return []
+    is_code = cell.cell_type is CellType.CODE
+    pieces = (splitter.code if is_code else splitter.markdown)(cell)
+    if is_code and wants_output(cell, mode, splitter.tokenizer):
+        pieces.extend(splitter.output(cell, pieces[-1]))
     return pieces
 
 
 def pack(pieces: Sequence[Piece], cap: int, tokenizer: Tokenizer) -> list[list[Piece]]:
-    """Greedy, order-preserving packing. Only a lone piece can exceed the cap."""
+    """Greedy, order-preserving packing. Only a lone piece can exceed the cap.
+
+    An output piece never starts a chunk: when it does not fit, the code piece before it moves
+    to the new chunk with it (`cell_pieces` guarantees the two fit together).
+    """
     groups: list[list[Piece]] = []
     current: list[Piece] = []
     for piece in pieces:
         if current and tokenizer.count(render([*current, piece])) > cap:
+            carried = []
+            if piece.kind is PieceKind.OUTPUT:
+                if len(current) == 1:
+                    raise ChunkingError("an output piece does not fit with its code piece")
+                carried = [current.pop()]
             groups.append(current)
-            current = []
+            current = carried
         current.append(piece)
     if current:
         groups.append(current)

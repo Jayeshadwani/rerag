@@ -180,14 +180,39 @@ def test_evidence_mode_keeps_only_evidence_outputs(tiny_tokenizer: Tokenizer) ->
     assert "UserWarning" in everything[0].text
 
 
-def test_long_output_is_cut_at_lines(tiny_tokenizer: Tokenizer) -> None:
-    out = "line1\nline2\nline3\nline4\nline5\n"
-    chunks = chunk_notebook(
-        "nb", [cell(0, CODE, "", output=out)], 14, tiny_tokenizer, OutputMode.ALL
-    )
-    # lines are 5 bytes once trimmed: two lines = 11 <= 14, three = 17 > 14
-    assert [c.text for c in chunks] == ["line1\nline2", "line3\nline4", "line5"]
-    assert all(p.unit is PieceUnit.OUTPUT_LINE for c in chunks for p in c.pieces)
+def test_output_that_does_not_fit_with_its_code_is_left_out(tiny_tokenizer: Tokenizer) -> None:
+    c = cell(0, CODE, "x = 1", output="line1\nline2\nline3")
+    # code 5 + blank line 2 + output 17 = 24 bytes
+    (fits,) = chunk_notebook("nb", [c], 24, tiny_tokenizer, OutputMode.ALL)
+    assert fits.text == "x = 1\n\nline1\nline2\nline3"
+    (left_out,) = chunk_notebook("nb", [c], 23, tiny_tokenizer, OutputMode.ALL)
+    assert left_out.text == "x = 1"
+
+
+def test_output_never_starts_a_chunk_and_moves_with_its_code(tiny_tokenizer: Tokenizer) -> None:
+    cells = [cell(0, CODE, "a = 1"), cell(1, CODE, "b = 2", output="2")]
+    # "a = 1\n\nb = 2" is 12 bytes and fits in 12; adding "\n\n2" makes 15 > 12.
+    chunks = chunk_notebook("nb", cells, 12, tiny_tokenizer, OutputMode.ALL)
+    assert [c.text for c in chunks] == ["a = 1", "b = 2\n\n2"]  # b = 2 travels with its output
+    assert chunks[1].pieces[0].kind is PieceKind.CODE
+
+
+def test_output_follows_the_last_statement_of_a_split_cell(tiny_tokenizer: Tokenizer) -> None:
+    c = cell(0, CODE, "a = 1\nb = 2\nc = 3", output="3")
+    # whole cell is 17 bytes; with output 20. Cap 14: the cell is split at statements.
+    chunks = chunk_notebook("nb", [c], 14, tiny_tokenizer, OutputMode.ALL)
+    assert [c.text for c in chunks] == ["a = 1\nb = 2", "c = 3\n\n3"]
+
+
+def test_output_without_code_is_never_emitted(tiny_tokenizer: Tokenizer) -> None:
+    for mode in (OutputMode.ALL, OutputMode.EVIDENCE):
+        assert (
+            chunk_notebook("nb", [cell(0, CODE, "", output="42")], 100, tiny_tokenizer, mode) == []
+        )
+        assert (
+            chunk_notebook("nb", [cell(0, CODE, "  \n", output="42")], 100, tiny_tokenizer, mode)
+            == []
+        )
 
 
 def test_empty_inputs_give_no_chunks(tiny_tokenizer: Tokenizer) -> None:
@@ -251,3 +276,11 @@ def test_identical_cells_in_one_chunk_list_their_hash_once(tiny_tokenizer: Token
     (chunk,) = chunk_notebook("nb", [twin_a, twin_b], 1000, tiny_tokenizer)
     assert [p.cell_index for p in chunk.pieces] == [0, 1]  # both cells are in the chunk
     assert chunk.cell_hashes == ("raw0",)  # but the shared hash appears once
+
+
+def test_pack_refuses_an_output_that_cannot_sit_with_its_code(tiny_tokenizer: Tokenizer) -> None:
+    code = Piece(cell_index=0, kind=PieceKind.CODE, part=0, unit=PieceUnit.CELL, text="x = 1")
+    out = Piece(cell_index=0, kind=PieceKind.OUTPUT, part=0, unit=PieceUnit.CELL, text="42")
+    assert pack([code, out], 9, tiny_tokenizer) == [[code, out]]  # 5 + 2 + 2 = 9 fits
+    with pytest.raises(ChunkingError, match="does not fit with its code"):
+        pack([code, out], 8, tiny_tokenizer)

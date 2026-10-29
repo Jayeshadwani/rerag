@@ -32,7 +32,7 @@ A survey of the real corpus (53 notebooks, `cl100k_base`, aggregates only) shows
    code block inside a markdown cell always stays in one piece. An unclosed fence runs to the end
    of the cell.
 4. **Oversize flag.** A chunk may exceed the cap only if it is one indivisible piece. It is then
-   flagged with the reason (statement, sentence, fenced block, output line, or unparsed code).
+   flagged with the reason (statement, sentence, fenced block, or unparsed code).
 5. **Unparseable code** (7 of 2,078 cells) is indivisible and flagged; no boundaries are invented.
 6. **"Exactly one chunk" restated.** Each cell's pieces partition its text exactly, and every
    piece lies in exactly one chunk. A cell appears in several chunks only when it alone exceeded
@@ -74,3 +74,23 @@ goes into the index. Chunk caps (256, 512, 1024) and the fixed-token baseline ar
 - ADR-004 text amended (see its heading and note). No other ADR changes.
 - `raw_hash`, the gold-set cell identity, is unaffected: labels stay valid under every arm and cap.
 - Chunk IDs depend on the output mode, since the chunk text differs.
+
+## Addendum: where an output may sit (owner decision, after the labelling round)
+
+Principle: only outputs that are clear evidence belong in chunk text; when in doubt, exclude, so
+the LLM never grounds an answer on an ambiguous output. For arms B and C this adds an invariant:
+
+- An output is one piece. It always sits in the same chunk as the code that produced it, directly
+  after the last piece of that code. It is never a chunk's first piece and never split from its
+  code, so a bare output with no code above it cannot exist.
+- If the output does not fit under the cap together with that last code piece, it is left out
+  (not truncated, not split). Arm B is therefore "all outputs that fit with their code", and the
+  M4 result must be read that way.
+- An output of a cell with no code is never emitted.
+- Consequently outputs are no longer cut at lines, and `output_line` is no longer a split unit or
+  an oversize reason. An output can no longer make a chunk exceed the cap.
+- The fixed-token baseline is structure-blind by definition and is not covered: a window may begin
+  at an output. It is never used in production.
+
+Tested by a property test (`test_an_output_always_directly_follows_the_code_that_produced_it`)
+and unit tests. The chunker version is `structural-2`, so chunk IDs differ from `structural-1`.

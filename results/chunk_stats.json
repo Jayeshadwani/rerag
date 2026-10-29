@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "git": {
-    "sha": "6f1ff49e62524e01d3354556acd9e50977daf61d",
-    "dirty": false
+    "sha": "1c9f861559922c4e41bb2b49954cc637c97e0071",
+    "dirty": true
   },
   "config": {
     "paths": {
@@ -62,7 +62,6 @@
         "statement": 38,
         "sentence": 15,
         "fenced_block": 4,
-        "output_line": 0,
         "unparsed_code": 2
       },
       "cells_split": 297,
@@ -72,44 +71,42 @@
       "chunker": "structural",
       "cap": 256,
       "outputs": "all",
-      "chunks": 3903,
+      "chunks": 3369,
       "tokens": {
-        "min": 1,
-        "median": 185.0,
-        "p90": 250,
-        "max": 1577
+        "min": 2,
+        "median": 163.0,
+        "p90": 248,
+        "max": 1554
       },
-      "under_quarter_cap": 569,
+      "under_quarter_cap": 565,
       "flagged_by_reason": {
         "statement": 38,
         "sentence": 15,
         "fenced_block": 4,
-        "output_line": 13,
         "unparsed_code": 2
       },
-      "cells_split": 810,
+      "cells_split": 297,
       "unparsed_code_cells": 2
     },
     {
       "chunker": "structural",
       "cap": 256,
       "outputs": "evidence",
-      "chunks": 3131,
+      "chunks": 3132,
       "tokens": {
         "min": 2,
-        "median": 155.0,
+        "median": 154.0,
         "p90": 248,
         "max": 1554
       },
-      "under_quarter_cap": 594,
+      "under_quarter_cap": 588,
       "flagged_by_reason": {
         "statement": 38,
         "sentence": 15,
         "fenced_block": 4,
-        "output_line": 0,
         "unparsed_code": 2
       },
-      "cells_split": 327,
+      "cells_split": 297,
       "unparsed_code_cells": 2
     },
     {
@@ -128,7 +125,6 @@
         "statement": 11,
         "sentence": 5,
         "fenced_block": 0,
-        "output_line": 0,
         "unparsed_code": 1
       },
       "cells_split": 80,
@@ -138,33 +134,32 @@
       "chunker": "structural",
       "cap": 512,
       "outputs": "all",
-      "chunks": 2675,
+      "chunks": 2536,
       "tokens": {
-        "min": 1,
-        "median": 210.0,
-        "p90": 491,
-        "max": 1577
+        "min": 2,
+        "median": 195.5,
+        "p90": 481,
+        "max": 1554
       },
-      "under_quarter_cap": 896,
+      "under_quarter_cap": 889,
       "flagged_by_reason": {
         "statement": 11,
         "sentence": 5,
         "fenced_block": 0,
-        "output_line": 10,
         "unparsed_code": 1
       },
-      "cells_split": 385,
+      "cells_split": 80,
       "unparsed_code_cells": 1
     },
     {
       "chunker": "structural",
       "cap": 512,
       "outputs": "evidence",
-      "chunks": 2317,
+      "chunks": 2318,
       "tokens": {
         "min": 2,
         "median": 158.0,
-        "p90": 472,
+        "p90": 470,
         "max": 1554
       },
       "under_quarter_cap": 953,
@@ -172,10 +167,9 @@
         "statement": 11,
         "sentence": 5,
         "fenced_block": 0,
-        "output_line": 0,
         "unparsed_code": 1
       },
-      "cells_split": 85,
+      "cells_split": 80,
       "unparsed_code_cells": 1
     },
     {
@@ -194,7 +188,6 @@
         "statement": 1,
         "sentence": 2,
         "fenced_block": 0,
-        "output_line": 0,
         "unparsed_code": 0
       },
       "cells_split": 15,
@@ -204,22 +197,21 @@
       "chunker": "structural",
       "cap": 1024,
       "outputs": "all",
-      "chunks": 2176,
+      "chunks": 2154,
       "tokens": {
-        "min": 1,
-        "median": 184.0,
-        "p90": 826,
-        "max": 1577
+        "min": 2,
+        "median": 182.0,
+        "p90": 811,
+        "max": 1554
       },
-      "under_quarter_cap": 1298,
+      "under_quarter_cap": 1296,
       "flagged_by_reason": {
         "statement": 1,
         "sentence": 2,
         "fenced_block": 0,
-        "output_line": 5,
         "unparsed_code": 0
       },
-      "cells_split": 125,
+      "cells_split": 15,
       "unparsed_code_cells": 0
     },
     {
@@ -238,10 +230,9 @@
         "statement": 1,
         "sentence": 2,
         "fenced_block": 0,
-        "output_line": 0,
         "unparsed_code": 0
       },
-      "cells_split": 17,
+      "cells_split": 15,
       "unparsed_code_cells": 0
     },
     {
@@ -260,7 +251,6 @@
         "statement": 0,
         "sentence": 0,
         "fenced_block": 0,
-        "output_line": 0,
         "unparsed_code": 0
       },
       "cells_split": 1489,
@@ -282,7 +272,6 @@
         "statement": 0,
         "sentence": 0,
         "fenced_block": 0,
-        "output_line": 0,
         "unparsed_code": 0
       },
       "cells_split": 823,
@@ -304,7 +293,6 @@
         "statement": 0,
         "sentence": 0,
         "fenced_block": 0,
-        "output_line": 0,
         "unparsed_code": 0
       },
       "cells_split": 419,
