@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "git": {
-    "sha": "06da9bfaa09006c97283ef9c30bf761b772e46b9",
+    "sha": "8e81ead33d41357cfba077df6b8170ee08bf5e06",
     "dirty": false
   },
   "config": {
@@ -31,25 +31,12 @@
   "pipeline_hash": "e27c7bf55596a013da6e830513bc939a0a8259e599f0cd8d1afcd97916660f85",
   "tokenizer": "cl100k_base",
   "tiktoken_version": "0.14.0",
-  "evidence_rule_fingerprint": "859eea67ec82000d69f0f060ec5a9bfbc89ede036548a1fa295ba883953676ed",
   "notebooks": 53,
   "cells": 6061,
-  "outputs_by_verdict": {
-    "evidence": 434,
-    "empty": 0,
-    "truncated": 202,
-    "too_long": 468,
-    "progress": 17,
-    "warning": 7,
-    "object_repr": 54,
-    "array": 40,
-    "table": 62
-  },
   "rows": [
     {
       "chunker": "structural",
       "cap": 256,
-      "outputs": "none",
       "chunks": 3107,
       "tokens": {
         "min": 2,
@@ -69,50 +56,7 @@
     },
     {
       "chunker": "structural",
-      "cap": 256,
-      "outputs": "all",
-      "chunks": 3369,
-      "tokens": {
-        "min": 2,
-        "median": 163.0,
-        "p90": 248,
-        "max": 1554
-      },
-      "under_quarter_cap": 565,
-      "flagged_by_reason": {
-        "statement": 38,
-        "sentence": 15,
-        "fenced_block": 4,
-        "unparsed_code": 2
-      },
-      "cells_split": 297,
-      "unparsed_code_cells": 2
-    },
-    {
-      "chunker": "structural",
-      "cap": 256,
-      "outputs": "evidence",
-      "chunks": 3132,
-      "tokens": {
-        "min": 2,
-        "median": 154.0,
-        "p90": 248,
-        "max": 1554
-      },
-      "under_quarter_cap": 588,
-      "flagged_by_reason": {
-        "statement": 38,
-        "sentence": 15,
-        "fenced_block": 4,
-        "unparsed_code": 2
-      },
-      "cells_split": 297,
-      "unparsed_code_cells": 2
-    },
-    {
-      "chunker": "structural",
       "cap": 512,
-      "outputs": "none",
       "chunks": 2310,
       "tokens": {
         "min": 2,
@@ -132,50 +76,7 @@
     },
     {
       "chunker": "structural",
-      "cap": 512,
-      "outputs": "all",
-      "chunks": 2536,
-      "tokens": {
-        "min": 2,
-        "median": 195.5,
-        "p90": 481,
-        "max": 1554
-      },
-      "under_quarter_cap": 889,
-      "flagged_by_reason": {
-        "statement": 11,
-        "sentence": 5,
-        "fenced_block": 0,
-        "unparsed_code": 1
-      },
-      "cells_split": 80,
-      "unparsed_code_cells": 1
-    },
-    {
-      "chunker": "structural",
-      "cap": 512,
-      "outputs": "evidence",
-      "chunks": 2318,
-      "tokens": {
-        "min": 2,
-        "median": 158.0,
-        "p90": 470,
-        "max": 1554
-      },
-      "under_quarter_cap": 953,
-      "flagged_by_reason": {
-        "statement": 11,
-        "sentence": 5,
-        "fenced_block": 0,
-        "unparsed_code": 1
-      },
-      "cells_split": 80,
-      "unparsed_code_cells": 1
-    },
-    {
-      "chunker": "structural",
       "cap": 1024,
-      "outputs": "none",
       "chunks": 2045,
       "tokens": {
         "min": 2,
@@ -194,51 +95,8 @@
       "unparsed_code_cells": 0
     },
     {
-      "chunker": "structural",
-      "cap": 1024,
-      "outputs": "all",
-      "chunks": 2154,
-      "tokens": {
-        "min": 2,
-        "median": 182.0,
-        "p90": 811,
-        "max": 1554
-      },
-      "under_quarter_cap": 1296,
-      "flagged_by_reason": {
-        "statement": 1,
-        "sentence": 2,
-        "fenced_block": 0,
-        "unparsed_code": 0
-      },
-      "cells_split": 15,
-      "unparsed_code_cells": 0
-    },
-    {
-      "chunker": "structural",
-      "cap": 1024,
-      "outputs": "evidence",
-      "chunks": 2047,
-      "tokens": {
-        "min": 2,
-        "median": 148.0,
-        "p90": 581,
-        "max": 1554
-      },
-      "under_quarter_cap": 1412,
-      "flagged_by_reason": {
-        "statement": 1,
-        "sentence": 2,
-        "fenced_block": 0,
-        "unparsed_code": 0
-      },
-      "cells_split": 15,
-      "unparsed_code_cells": 0
-    },
-    {
       "chunker": "fixed",
       "cap": 256,
-      "outputs": "none",
       "chunks": 1871,
       "tokens": {
         "min": 1,
@@ -259,7 +117,6 @@
     {
       "chunker": "fixed",
       "cap": 512,
-      "outputs": "none",
       "chunks": 950,
       "tokens": {
         "min": 1,
@@ -280,7 +137,6 @@
     {
       "chunker": "fixed",
       "cap": 1024,
-      "outputs": "none",
       "chunks": 487,
       "tokens": {
         "min": 9,
