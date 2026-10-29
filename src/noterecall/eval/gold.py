@@ -4,9 +4,10 @@ The gold set is written by the owner and lives in the private data repo (`paths.
 this module never writes labels on its own. Relevance is labelled at the cell level as
 `(notebook_path, raw_hash)` so labels stay valid across chunking ablations. The split is
 assigned once by `freeze_gold`: within each query type, queries are ranked by a hash of
-`seed:id` and the first `round_half_up(0.3 * n)` become the test split. That makes the split
-deterministic and independent of file order. After freezing, adding queries or editing a split
-is a validation error; fixing labels is still allowed.
+`seed:id` (ids are unique, so there are no ties) and the first `round_half_up(0.3 * n)`
+become the test split. That makes the split deterministic and independent of file order.
+After freezing, adding queries or editing a split or type is a validation error; fixing labels
+is still allowed.
 """
 
 import hashlib
@@ -138,7 +139,7 @@ def assign_splits(queries: tuple[GoldQuery, ...], seed: int = SPLIT_SEED) -> dic
     """Stratified 70/30 split by query type; deterministic and independent of query order."""
     assignment: dict[str, Split] = {}
     for qtype in QueryType:
-        ids = sorted((q.id for q in queries if q.type is qtype), key=lambda i: (_rank(seed, i), i))
+        ids = sorted((q.id for q in queries if q.type is qtype), key=lambda i: _rank(seed, i))
         cut = held_out_count(len(ids))
         assignment.update({i: Split.TEST if n < cut else Split.DEV for n, i in enumerate(ids)})
     return assignment

@@ -223,3 +223,31 @@ def test_initial_marks_support_editing_and_orphans_are_listed() -> None:
     assert "[x] 1. gone.ipynb (no stored cell deadbeef)" in listing
     assert session.handle("/done") == "saved"
     assert ("gone.ipynb", "deadbeef00") in session.marked
+
+
+def test_rare_words_outweigh_common_ones() -> None:
+    es = build_entries(
+        [
+            (
+                "n.ipynb",
+                [
+                    cell(0, CODE, "common x"),
+                    cell(1, CODE, "rare y"),
+                    cell(2, CODE, "common z"),
+                    cell(3, CODE, "common w"),
+                ],
+            )
+        ]
+    )
+    # N = 4. "common": df 3, idf = ln(1 + 4/3) = 0.847. "rare": df 1, idf = ln(5) = 1.609.
+    # The rare-word cell (1.609) beats every common-word cell (0.847), though it comes later.
+    assert next(e.cell_index for e in search(es, "common rare")) == 1
+
+
+def test_more_stops_exactly_at_the_last_page_and_zero_is_not_a_number() -> None:
+    exact = build_entries([("n.ipynb", [cell(i, CODE, f"common {i}") for i in range(PAGE)])])
+    session = QuerySession(exact, "q", False)
+    session.handle("common")
+    assert session.handle("/more") == "nothing more to show"
+    assert session.handle("/mark 0").startswith("'0' is not a number")
+    assert session.marked == set()

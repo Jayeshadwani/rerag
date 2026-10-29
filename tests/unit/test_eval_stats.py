@@ -40,6 +40,17 @@ def test_two_point_interval_is_exactly_zero_to_one() -> None:
     assert (ci.low, ci.high, ci.mean, ci.resamples) == (0.0, 1.0, 0.5, 10_000)
 
 
+def test_interval_tails_match_the_exact_resampling_distribution() -> None:
+    # deltas: eight 0s and two 1s. A resample's mean is k/10 with k ~ Binomial(10, 0.2):
+    #   P(k <= 0) = 0.8**10 = 0.107 > 2.5%        -> 2.5th percentile  = 0.0
+    #   P(k <= 4) = 0.9672 < 97.5% <= P(k <= 5)   -> 97.5th percentile = 0.5
+    # (the 95th percentile would be 0.4, and resampling 9 instead of 10 values would give 4/9)
+    ci = paired_bootstrap([0.0] * 8 + [1.0] * 2, seed=1)
+    assert ci.low == 0.0
+    assert ci.high == pytest.approx(0.5)
+    assert ci.mean == pytest.approx(0.2)
+
+
 def test_bootstrap_is_reproducible_and_seed_dependent() -> None:
     values = list(np.random.default_rng(0).normal(0.02, 0.1, size=60))
     a = paired_bootstrap(values, seed=5, resamples=2000)
@@ -97,6 +108,12 @@ def test_permutation_pvalue_cases() -> None:
     assert permutation_pvalue([1.0] * 10, seed=3) == pytest.approx(2 / 1024, abs=0.002)
     # all-zero deltas: every flip is as extreme as the observed mean, so p = 1
     assert permutation_pvalue([0.0] * 6, seed=3, resamples=100) == 1.0
+    # [1, 1, 1, -1]: a random sign pattern gives mean (sum of 4 signs)/4 in {-1, -.5, 0, .5, 1}
+    # with probabilities 1, 4, 6, 4, 1 out of 16. |mean| >= 0.5 has probability 10/16 = 0.625
+    # (two-sided); a one-sided test would give 5/16
+    assert permutation_pvalue([1.0, 1.0, 1.0, -1.0], seed=3) == pytest.approx(0.625, abs=0.03)
+    # thirty +1s: no sampled sign pattern is as extreme, so the +1 correction gives 1/10001
+    assert permutation_pvalue([1.0] * 30, seed=3) == 1 / 10_001
     balanced = [1.0, -1.0] * 10
     assert permutation_pvalue(balanced, seed=3) > 0.5
 

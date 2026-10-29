@@ -251,6 +251,15 @@ def test_tampering_after_freeze_is_an_error() -> None:
         update={"queries": (*frozen.queries, query("new", QueryType.CONCEPT, ("a.ipynb", "h1")))}
     )
     assert ("error", "added_after_freeze", "new") in codes(validate_gold(added, NOTEBOOKS))
+    retyped = frozen.model_copy(
+        update={
+            "queries": (
+                frozen.queries[0].model_copy(update={"type": QueryType.HOW_DID_I}),
+                *frozen.queries[1:],
+            )
+        }
+    )
+    assert ("error", "split_tampered", None) in codes(validate_gold(retyped, NOTEBOOKS))
     removed = frozen.model_copy(update={"queries": frozen.queries[1:]})
     assert ("error", "split_tampered", None) in codes(validate_gold(removed, NOTEBOOKS))
     assert ("error", "split_without_freeze", None) in codes(
