@@ -24,7 +24,7 @@ banned:
 	$(UV) python scripts/check_banned.py src
 
 sync:
-	@echo "make sync: not available until M1 (ingest + sync)" >&2; exit 1
+	$(UV) noterecall sync
 
 eval:
 	@echo "make eval: not available until M4 (retrieval ablation runner)" >&2; exit 1
@@ -33,7 +33,7 @@ eval-test:
 	@echo "make eval-test: not available until M4 (retrieval ablation runner)" >&2; exit 1
 
 results:
-	@echo "make results: not available until M4 (scripts/render_results.py)" >&2; exit 1
+	$(UV) python scripts/render_results.py results/corpus_stats.json
 
 mutation:
 	@echo "make mutation: not available until M9 (mutmut on fusion, metrics, planner, citations)" >&2; exit 1

@@ -14,6 +14,13 @@ results_dir = "out"
 
 [logging]
 level = "WARNING"
+
+[cleaning]
+rules_path = "rules.yaml"
+max_output_lines = 5
+
+[tokenizer]
+encoding = "tiny"
 """
 
 
@@ -25,23 +32,39 @@ def _write(tmp_path: Path, text: str) -> Path:
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("NOTERECALL_LOGGING__LEVEL", "NOTERECALL_PATHS__DB_PATH", "NOTERECALL_BOGUS"):
+    for name in (
+        "NOTERECALL_LOGGING__LEVEL",
+        "NOTERECALL_PATHS__DB_PATH",
+        "NOTERECALL_CLEANING__MAX_OUTPUT_LINES",
+        "NOTERECALL_BOGUS",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
 def test_default_config_file_loads() -> None:
     settings = load_settings()
     assert DEFAULT_CONFIG_PATH.is_file()
-    assert settings.paths.raw_dir == Path("data/raw")
+    assert settings.paths.raw_dir == Path("data/rerag-data/notebooks")
     assert settings.paths.db_path == Path("data/noterecall.sqlite")
     assert settings.paths.results_dir == Path("results")
     assert settings.logging.level == "INFO"
+    assert settings.cleaning.rules_path == Path("config/cleaning_rules.yaml")
+    assert settings.cleaning.max_output_lines == 20
+    assert settings.tokenizer.encoding == "cl100k_base"
+
+
+def test_default_db_is_outside_the_data_repo() -> None:
+    paths = load_settings().paths
+    data_repo = Path("data/rerag-data")
+    assert data_repo in paths.raw_dir.parents
+    assert data_repo not in paths.db_path.parents
 
 
 def test_values_come_from_given_file(tmp_path: Path) -> None:
     settings = load_settings(_write(tmp_path, VALID_TOML))
     assert settings.paths.raw_dir == Path("raw")
     assert settings.logging.level == "WARNING"
+    assert settings.cleaning.max_output_lines == 5
 
 
 def test_env_overrides_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,3 +117,17 @@ def test_missing_file_is_a_config_error(tmp_path: Path) -> None:
 def test_malformed_toml_is_a_config_error(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="not valid TOML"):
         load_settings(_write(tmp_path, "[paths\nraw_dir = "))
+
+
+def test_max_output_lines_must_be_positive(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="max_output_lines"):
+        load_settings(
+            _write(tmp_path, VALID_TOML.replace("max_output_lines = 5", "max_output_lines = 0"))
+        )
+
+
+def test_env_overrides_nested_cleaning_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NOTERECALL_CLEANING__MAX_OUTPUT_LINES", "7")
+    assert load_settings(_write(tmp_path, VALID_TOML)).cleaning.max_output_lines == 7

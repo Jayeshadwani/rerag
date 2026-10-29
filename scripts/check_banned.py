@@ -2,9 +2,10 @@
 
 Banned: the marker words TODO/FIXME/XXX (anywhere in the text, comments and docstrings
 included), any mention of NotImplementedError, functions whose body is only `...` or
-`pass` (a docstring does not count as a body), and `except` clauses that catch
-Exception/BaseException (bare, named, aliased, or inside a tuple). `...` is allowed
-only as the body of a method inside a `Protocol` class or an `@overload` function.
+`pass` (a docstring does not count as a body), `except` clauses that catch
+Exception/BaseException (bare, named, aliased, or inside a tuple), and functions whose
+body is longer than 40 lines (the docstring is not counted). `...` is allowed only as the
+body of a method inside a `Protocol` class or an `@overload` function.
 """
 
 import argparse
@@ -19,6 +20,7 @@ MARKER_RE = re.compile(r"\b(TODO|FIXME|XXX)\b")
 NOT_IMPLEMENTED_RE = re.compile(r"\bNotImplementedError\b")
 BROAD_EXCEPTIONS = {"Exception", "BaseException"}
 SCANNED_SUFFIXES = {".py", ".md"}
+MAX_BODY_LINES = 40
 
 type FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
 
@@ -92,6 +94,14 @@ def _stub_kind(node: FunctionNode) -> str | None:
     return None
 
 
+def _body_line_count(node: FunctionNode) -> int:
+    """Lines from the first body statement (docstring excluded) to the end of the function."""
+    body = _body_without_docstring(node)
+    if not body or node.end_lineno is None:
+        return 0
+    return node.end_lineno - body[0].lineno + 1
+
+
 def _protocol_methods(tree: ast.AST) -> set[int]:
     """ids of functions defined directly in a Protocol class body."""
     allowed: set[int] = set()
@@ -104,6 +114,10 @@ def _protocol_methods(tree: ast.AST) -> set[int]:
 
 
 def _check_function(path: Path, node: FunctionNode, in_protocol: bool) -> Iterator[Violation]:
+    length = _body_line_count(node)
+    if length > MAX_BODY_LINES:
+        message = f"function {node.name!r} body is {length} lines (max {MAX_BODY_LINES})"
+        yield Violation(path, node.lineno, message)
     kind = _stub_kind(node)
     if kind == "pass":
         yield Violation(path, node.lineno, f"function {node.name!r} has `pass` as its body")

@@ -2,9 +2,16 @@
 # when the experiment that decides them has produced a results/*.json file.
 
 [paths]
-raw_dir = "data/raw"
+raw_dir = "data/rerag-data/notebooks"
 db_path = "data/noterecall.sqlite"
 results_dir = "results"
 
 [logging]
 level = "INFO"
+
+[cleaning]
+rules_path = "config/cleaning_rules.yaml"
+max_output_lines = 20
+
+[tokenizer]
+encoding = "cl100k_base"

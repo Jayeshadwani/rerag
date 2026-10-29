@@ -1,0 +1,143 @@
+"""Command line: sync and stats end to end on the synthetic fixtures (tokenizer is offline)."""
+
+import shutil
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+import structlog
+from typer.testing import CliRunner
+
+from make_fixtures import FIXTURE_DIR
+from noterecall import cli
+from noterecall.chunking.tokens import Tokenizer, TokenizerError
+from noterecall.ingest.stats import CorpusStats
+
+RULES_PATH = Path(__file__).resolve().parents[2] / "config" / "cleaning_rules.yaml"
+runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _offline(monkeypatch: pytest.MonkeyPatch, tiny_tokenizer: Tokenizer) -> Iterator[None]:
+    for name in ("NOTERECALL_LOGGING__LEVEL", "NOTERECALL_PATHS__RAW_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(cli, "load_tokenizer", lambda _name: tiny_tokenizer)
+    yield
+    structlog.reset_defaults()
+
+
+@pytest.fixture
+def config(tmp_path: Path) -> Path:
+    raw = tmp_path / "raw"
+    shutil.copytree(FIXTURE_DIR, raw)
+    path = tmp_path / "config.toml"
+    path.write_text(
+        f"""
+[paths]
+raw_dir = "{raw}"
+db_path = "{tmp_path / "state" / "notes.sqlite"}"
+results_dir = "{tmp_path / "results"}"
+
+[logging]
+level = "INFO"
+
+[cleaning]
+rules_path = "{RULES_PATH}"
+max_output_lines = 20
+
+[tokenizer]
+encoding = "tiny-bytes"
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_help_lists_both_commands() -> None:
+    result = runner.invoke(cli.app, ["--help"])
+    assert result.exit_code == 0
+    assert "sync" in result.stdout
+    assert "stats" in result.stdout
+
+
+def test_sync_then_resync(config: Path) -> None:
+    first = runner.invoke(cli.app, ["sync", "--config", str(config)])
+    assert first.exit_code == 0, first.stderr
+    assert first.stdout.strip() == "sync: 7 added, 0 updated, 0 unchanged, 0 removed"
+    second = runner.invoke(cli.app, ["sync", "--config", str(config)])
+    assert second.stdout.strip() == "sync: 0 added, 0 updated, 7 unchanged, 0 removed"
+
+
+def test_logs_go_to_stderr_without_file_names(config: Path) -> None:
+    result = runner.invoke(cli.app, ["sync", "--config", str(config)])
+    assert "sync.done" in result.stderr
+    assert "sync.done" not in result.stdout
+    assert ".ipynb" not in result.stderr
+    assert "no_headings" not in result.stderr
+
+
+def test_stats_writes_the_report_to_the_default_path(config: Path, tmp_path: Path) -> None:
+    runner.invoke(cli.app, ["sync", "--config", str(config)])
+    result = runner.invoke(cli.app, ["stats", "--config", str(config)])
+    assert result.exit_code == 0, result.stderr
+    target = tmp_path / "results" / "corpus_stats.json"
+    assert result.stdout.strip() == f"stats: wrote {target}"
+    stats = CorpusStats.model_validate_json(target.read_text(encoding="utf-8"))
+    assert (stats.notebooks, stats.cells_raw) == (7, 54)
+
+
+def test_stats_honours_out(config: Path, tmp_path: Path) -> None:
+    runner.invoke(cli.app, ["sync", "--config", str(config)])
+    out = tmp_path / "elsewhere" / "s.json"
+    result = runner.invoke(cli.app, ["stats", "--config", str(config), "--out", str(out)])
+    assert result.exit_code == 0
+    assert out.is_file()
+
+
+def test_stats_before_sync_fails_with_a_clear_message(config: Path) -> None:
+    result = runner.invoke(cli.app, ["stats", "--config", str(config)])
+    assert result.exit_code == 1
+    assert "error: the database has no notebooks" in result.stderr
+
+
+def test_sync_with_missing_raw_dir_fails(config: Path, tmp_path: Path) -> None:
+    shutil.rmtree(tmp_path / "raw")
+    result = runner.invoke(cli.app, ["sync", "--config", str(config)])
+    assert result.exit_code == 1
+    assert "error: raw directory does not exist" in result.stderr
+
+
+def test_tokenizer_failure_is_reported_not_raised(
+    config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def offline(_name: str) -> Tokenizer:
+        raise TokenizerError("cannot load tokenizer 'x': proxy said no")
+
+    monkeypatch.setattr(cli, "load_tokenizer", offline)
+    result = runner.invoke(cli.app, ["sync", "--config", str(config)])
+    assert result.exit_code == 1
+    assert "proxy said no" in result.stderr
+
+
+def test_missing_config_file_fails(tmp_path: Path) -> None:
+    result = runner.invoke(cli.app, ["sync", "--config", str(tmp_path / "nope.toml")])
+    assert result.exit_code == 1
+    assert "error: config file not found" in result.stderr
+
+
+def test_unexpected_errors_are_not_swallowed(config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_args: object) -> None:
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(cli, "run_sync", boom)
+    result = runner.invoke(cli.app, ["sync", "--config", str(config)])
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)
+
+
+def test_log_level_filters_events(config: Path) -> None:
+    text = config.read_text(encoding="utf-8").replace('level = "INFO"', 'level = "WARNING"')
+    config.write_text(text, encoding="utf-8")
+    result = runner.invoke(cli.app, ["sync", "--config", str(config)])
+    assert result.exit_code == 0
+    assert "sync.done" not in result.stderr
