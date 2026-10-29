@@ -29,7 +29,7 @@ You are implementing **NoteRecall** exactly as specified in `PLAN.md`. The owner
 
 ## 4. Evaluation integrity
 
-- Never create, edit, reformat, or "fix" files under `eval_data/gold/`. The owner writes them. You may build `noterecall label` and `noterecall gold validate`.
+- The gold set lives in the private data repo, not in this repo; its path comes from config (`paths.gold_path`, default `data/rerag-data/gold/gold.json`). Never create, edit, reformat, or "fix" the gold file, and never commit gold queries or labels here. The owner writes and commits it. You may build `noterecall label`, `noterecall gold validate`, `gold freeze` and `gold stats`, and test them only on synthetic data in temporary paths.
 - All tuning uses the **dev** split. The **test** split is run once per milestone via `make eval-test`, and its output is committed unchanged.
 - Apply the ADR-010 decision rule mechanically. Report every ablation row, including ones that hurt.
 - `results/*.json` must contain: metric values, per-query scores, CI, config snapshot, model revisions, prompt versions, git SHA. Metrics only — never note content or query text from private data.

@@ -1,12 +1,23 @@
-"""Shared pytest configuration: `live` tests run only when NOTERECALL_LIVE=1."""
+"""Shared pytest configuration: `live` tests run only when NOTERECALL_LIVE=1.
+
+Also the fixtures the command-line tests share: an offline tokenizer and a synthetic corpus config.
+"""
 
 import os
+import shutil
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
+import structlog
 import tiktoken
 from hypothesis import settings
 
+from make_fixtures import FIXTURE_DIR
+from noterecall import cli
 from noterecall.chunking.tokens import Tokenizer
+
+RULES_PATH = Path(__file__).resolve().parents[1] / "config" / "cleaning_rules.yaml"
 
 # Deterministic property tests: the same examples every run (ADR-015 reproducibility).
 settings.register_profile("noterecall", derandomize=True, max_examples=200, deadline=None)
@@ -33,3 +44,43 @@ def tiny_tokenizer() -> Tokenizer:
         special_tokens={"<|endoftext|>": 256},
     )
     return Tokenizer(encoding)
+
+
+@pytest.fixture(autouse=True)
+def _offline(monkeypatch: pytest.MonkeyPatch, tiny_tokenizer: Tokenizer) -> Iterator[None]:
+    for name in ("NOTERECALL_LOGGING__LEVEL", "NOTERECALL_PATHS__RAW_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(cli, "load_tokenizer", lambda _name: tiny_tokenizer)
+    yield
+    structlog.reset_defaults()
+
+
+@pytest.fixture
+def config(tmp_path: Path) -> Path:
+    raw = tmp_path / "raw"
+    shutil.copytree(FIXTURE_DIR, raw)
+    path = tmp_path / "config.toml"
+    path.write_text(
+        f"""
+[paths]
+raw_dir = "{raw}"
+db_path = "{tmp_path / "state" / "notes.sqlite"}"
+results_dir = "{tmp_path / "results"}"
+gold_path = "{tmp_path / "state" / "gold.json"}"
+
+[logging]
+level = "INFO"
+
+[cleaning]
+rules_path = "{RULES_PATH}"
+max_output_lines = 20
+
+[tokenizer]
+encoding = "tiny-bytes"
+
+[chunking]
+candidate_caps = [64, 128]
+""",
+        encoding="utf-8",
+    )
+    return path

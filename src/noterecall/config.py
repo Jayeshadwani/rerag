@@ -33,6 +33,7 @@ class PathsConfig(BaseModel):
     raw_dir: Path
     db_path: Path
     results_dir: Path
+    gold_path: Path
 
 
 class LoggingConfig(BaseModel):

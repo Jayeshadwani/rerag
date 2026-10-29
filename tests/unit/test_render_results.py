@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from noterecall.chunking.report import ChunkRow, ChunkSizes, ChunkStats
+from noterecall.eval.stats import BootstrapValidation, SimulationResult, SimulationSpec
 from noterecall.ingest.stats import (
     CorpusStats,
     Distribution,
@@ -16,6 +17,7 @@ from render_results import (
     EvidenceReport,
     Interval,
     main,
+    render_bootstrap_validation,
     render_chunk_stats,
     render_corpus_stats,
     render_evidence_eval,
@@ -162,3 +164,30 @@ def test_main_dispatches_on_the_kind_of_results_file(
     assert "Flagged oversize" in capsys.readouterr().out
     assert main([str(evaluation)]) == 0
     assert "Evidence rule vs owner labels" in capsys.readouterr().out
+
+
+def _validation() -> BootstrapValidation:
+    spec = SimulationSpec(effect=0.05, sd=0.1, n=60, trials=1000, resamples=1000)
+    return BootstrapValidation(
+        schema_version=1,
+        git=GitState(sha="c" * 40, dirty=False),
+        seed=9,
+        simulations=(
+            SimulationResult(spec=spec, excludes_zero_above=0.953, covers_true_effect=0.937),
+        ),
+    )
+
+
+def test_bootstrap_validation_table() -> None:
+    text = render_bootstrap_validation(_validation())
+    assert "| 0.05 | 60 | 1,000 | 95.3% | 93.7% |" in text
+    assert "Synthetic data only (sd 0.1), seed 9, commit `cccccccccccc`." in text
+
+
+def test_main_renders_the_bootstrap_validation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "v.json"
+    path.write_text(_validation().model_dump_json(), encoding="utf-8")
+    assert main([str(path)]) == 0
+    assert "Interval contains the true mean" in capsys.readouterr().out

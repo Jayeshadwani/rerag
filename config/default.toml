@@ -5,6 +5,8 @@
 raw_dir = "data/rerag-data/notebooks"
 db_path = "data/noterecall.sqlite"
 results_dir = "results"
+# The gold set is private (ADR-009): it lives in the data repo, and the owner writes it.
+gold_path = "data/rerag-data/gold/gold.json"
 
 [logging]
 level = "INFO"
