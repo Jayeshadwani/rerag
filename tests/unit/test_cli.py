@@ -1,60 +1,17 @@
 """Command line: sync and stats end to end on the synthetic fixtures (tokenizer is offline)."""
 
 import shutil
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-import structlog
 from typer.testing import CliRunner
 
-from make_fixtures import FIXTURE_DIR
 from noterecall import cli
 from noterecall.chunking.report import ChunkStats
 from noterecall.chunking.tokens import Tokenizer, TokenizerError
 from noterecall.ingest.stats import CorpusStats
 
-RULES_PATH = Path(__file__).resolve().parents[2] / "config" / "cleaning_rules.yaml"
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def _offline(monkeypatch: pytest.MonkeyPatch, tiny_tokenizer: Tokenizer) -> Iterator[None]:
-    for name in ("NOTERECALL_LOGGING__LEVEL", "NOTERECALL_PATHS__RAW_DIR"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(cli, "load_tokenizer", lambda _name: tiny_tokenizer)
-    yield
-    structlog.reset_defaults()
-
-
-@pytest.fixture
-def config(tmp_path: Path) -> Path:
-    raw = tmp_path / "raw"
-    shutil.copytree(FIXTURE_DIR, raw)
-    path = tmp_path / "config.toml"
-    path.write_text(
-        f"""
-[paths]
-raw_dir = "{raw}"
-db_path = "{tmp_path / "state" / "notes.sqlite"}"
-results_dir = "{tmp_path / "results"}"
-
-[logging]
-level = "INFO"
-
-[cleaning]
-rules_path = "{RULES_PATH}"
-max_output_lines = 20
-
-[tokenizer]
-encoding = "tiny-bytes"
-
-[chunking]
-candidate_caps = [64, 128]
-""",
-        encoding="utf-8",
-    )
-    return path
 
 
 def test_help_lists_both_commands() -> None:

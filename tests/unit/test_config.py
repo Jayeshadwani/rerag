@@ -11,6 +11,7 @@ VALID_TOML = """
 raw_dir = "raw"
 db_path = "db.sqlite"
 results_dir = "out"
+gold_path = "gold/g.json"
 
 [logging]
 level = "WARNING"
@@ -50,6 +51,7 @@ def test_default_config_file_loads() -> None:
     assert settings.paths.raw_dir == Path("data/rerag-data/notebooks")
     assert settings.paths.db_path == Path("data/noterecall.sqlite")
     assert settings.paths.results_dir == Path("results")
+    assert settings.paths.gold_path == Path("data/rerag-data/gold/gold.json")
     assert settings.logging.level == "INFO"
     assert settings.cleaning.rules_path == Path("config/cleaning_rules.yaml")
     assert settings.cleaning.max_output_lines == 20
@@ -142,3 +144,8 @@ def test_candidate_caps_must_be_positive_and_non_empty(tmp_path: Path, value: st
     text = VALID_TOML.replace("candidate_caps = [8, 16]", f"candidate_caps = {value}")
     with pytest.raises(ConfigError, match="candidate_caps"):
         load_settings(_write(tmp_path, text))
+
+
+def test_missing_gold_path_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="gold_path"):
+        load_settings(_write(tmp_path, VALID_TOML.replace('gold_path = "gold/g.json"\n', "")))
