@@ -14,12 +14,19 @@ from typing import Annotated
 import structlog
 import typer
 
+from noterecall.chunking.report import compute_chunk_stats
 from noterecall.chunking.tokens import TokenizerError, load_tokenizer
 from noterecall.config import ConfigError, Settings, load_settings
 from noterecall.index.store import StoreError, connect
 from noterecall.ingest.clean import RulesError, load_rules
 from noterecall.ingest.ipynb import IpynbLoader, NotebookParseError
-from noterecall.ingest.stats import Provenance, StatsError, compute_stats, git_state, write_stats
+from noterecall.ingest.stats import (
+    Provenance,
+    StatsError,
+    compute_stats,
+    git_state,
+    write_stats,
+)
 from noterecall.ingest.sync import (
     Pipeline,
     SyncError,
@@ -133,5 +140,39 @@ def stats(
     """Write the aggregate corpus report (no note text, no file names)."""
     try:
         typer.echo(_stats(_settings(config), out))
+    except KNOWN_ERRORS as exc:
+        raise _fail(exc) from exc
+
+
+def _provenance(settings: Settings) -> Provenance:
+    return Provenance(
+        pipeline_hash=_pipeline_hash(settings),
+        rules_sha256=file_sha256(settings.cleaning.rules_path),
+        tokenizer_name=settings.tokenizer.encoding,
+        git=git_state(),
+    )
+
+
+def _chunk_stats(settings: Settings, out: Path | None) -> str:
+    tokenizer = load_tokenizer(settings.tokenizer.encoding)
+    target = out if out is not None else settings.paths.results_dir / "chunk_stats.json"
+    conn = connect(settings.paths.db_path)
+    try:
+        stats = compute_chunk_stats(conn, settings, _provenance(settings), tokenizer)
+    finally:
+        conn.close()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(stats.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    return f"chunk-stats: wrote {target}"
+
+
+@app.command("chunk-stats")
+def chunk_stats(
+    config: ConfigOption = None,
+    out: Annotated[Path | None, typer.Option("--out", help="Output JSON path.")] = None,
+) -> None:
+    """Write aggregate chunk statistics for every candidate cap (no note text, no file names)."""
+    try:
+        typer.echo(_chunk_stats(_settings(config), out))
     except KNOWN_ERRORS as exc:
         raise _fail(exc) from exc

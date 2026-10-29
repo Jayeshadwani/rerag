@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from make_fixtures import FIXTURE_DIR
 from noterecall import cli
+from noterecall.chunking.report import ChunkStats
 from noterecall.chunking.tokens import Tokenizer, TokenizerError
 from noterecall.ingest.stats import CorpusStats
 
@@ -47,6 +48,9 @@ max_output_lines = 20
 
 [tokenizer]
 encoding = "tiny-bytes"
+
+[chunking]
+candidate_caps = [64, 128]
 """,
         encoding="utf-8",
     )
@@ -141,3 +145,41 @@ def test_log_level_filters_events(config: Path) -> None:
     result = runner.invoke(cli.app, ["sync", "--config", str(config)])
     assert result.exit_code == 0
     assert "sync.done" not in result.stderr
+
+
+def _synced(config: Path) -> None:
+    assert runner.invoke(cli.app, ["sync", "--config", str(config)]).exit_code == 0
+
+
+def test_chunk_stats_writes_rows_for_every_cap(config: Path, tmp_path: Path) -> None:
+    _synced(config)
+    result = runner.invoke(cli.app, ["chunk-stats", "--config", str(config)])
+    assert result.exit_code == 0, result.stderr
+    target = tmp_path / "results" / "chunk_stats.json"
+    assert result.stdout.strip() == f"chunk-stats: wrote {target}"
+    stats = ChunkStats.model_validate_json(target.read_text(encoding="utf-8"))
+    assert len(stats.rows) == 4  # caps [64, 128] x (structural, fixed)
+    # kept cells per fixture notebook: 5 + 9 + 3 + 6 + 4 + 13 + 6
+    assert (stats.notebooks, stats.cells) == (7, 46)
+
+
+def test_chunk_stats_honours_out_and_needs_a_synced_database(config: Path, tmp_path: Path) -> None:
+    before = runner.invoke(cli.app, ["chunk-stats", "--config", str(config)])
+    assert before.exit_code == 1
+    assert "error: the database has no notebooks" in before.stderr
+    _synced(config)
+    out = tmp_path / "elsewhere" / "c.json"
+    assert (
+        runner.invoke(
+            cli.app, ["chunk-stats", "--config", str(config), "--out", str(out)]
+        ).exit_code
+        == 0
+    )
+    assert out.is_file()
+
+
+@pytest.mark.parametrize("command", ["chunk-stats"])
+def test_new_commands_report_a_missing_config_file(command: str, tmp_path: Path) -> None:
+    result = runner.invoke(cli.app, [command, "--config", str(tmp_path / "nope.toml")])
+    assert result.exit_code == 1
+    assert "error: config file not found" in result.stderr

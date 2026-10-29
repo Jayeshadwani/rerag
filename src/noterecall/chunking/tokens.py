@@ -26,6 +26,18 @@ class Tokenizer:
         """Number of tokens in `text`; special-token lookalikes count as plain text."""
         return len(self._encoding.encode(text, disallowed_special=()))
 
+    def token_starts(self, text: str) -> list[int]:
+        """Character offset at which each token of `text` starts.
+
+        A token that begins inside a multi-byte character reports that character's start, so
+        slicing `text` at these offsets never cuts a character in two.
+        """
+        tokens = self._encoding.encode(text, disallowed_special=())
+        decoded, offsets = self._encoding.decode_with_offsets(tokens)
+        if decoded != text:
+            raise TokenizerError("decoding the tokens did not reproduce the text")
+        return offsets
+
 
 def load_tokenizer(encoding_name: str) -> Tokenizer:
     """Load a named tiktoken encoding. Downloads its vocabulary once, then uses the cache."""

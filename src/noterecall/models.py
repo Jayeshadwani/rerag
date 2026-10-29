@@ -1,4 +1,4 @@
-"""Domain models for ingest and storage. Implements ADR-003 (cleaning) and ADR-009 (cell hashes).
+"""Domain models for ingest, storage and chunking. Implements ADR-003, ADR-004 and ADR-009.
 
 `Raw*` models are what the parser reads from a notebook before any cleaning. `Cell` and
 `Notebook` are the cleaned form that is stored. `raw_hash` is the sha256 of the cell's
@@ -84,3 +84,58 @@ class Notebook(BaseModel):
     clean_tokens: int = Field(ge=0)
     counts: dict[str, int]
     cells: tuple[Cell, ...]
+
+
+class PieceKind(StrEnum):
+    """Which part of a cell a piece comes from."""
+
+    MARKDOWN = "markdown"
+    CODE = "code"
+
+
+class PieceUnit(StrEnum):
+    """The unit a piece was cut at. Statements, sentences, fences and unparsed code are atoms."""
+
+    CELL = "cell"
+    PARAGRAPH = "paragraph"
+    STATEMENT = "statement"
+    SENTENCE = "sentence"
+    FENCED_BLOCK = "fenced_block"
+    UNPARSED_CODE = "unparsed_code"
+    WINDOW = "window"
+
+
+class OversizeReason(StrEnum):
+    """Why a chunk is allowed to exceed the cap: it is one indivisible piece."""
+
+    STATEMENT = "statement"
+    SENTENCE = "sentence"
+    FENCED_BLOCK = "fenced_block"
+    UNPARSED_CODE = "unparsed_code"
+
+
+class Piece(BaseModel):
+    """A contiguous slice of one cell. A cell's pieces concatenate to its exact text."""
+
+    model_config = ConfigDict(frozen=True)
+
+    cell_index: int = Field(ge=0)
+    kind: PieceKind
+    part: int = Field(ge=0)
+    unit: PieceUnit
+    text: str
+
+
+class Chunk(BaseModel):
+    """A retrievable unit. `cell_hashes` are the `raw_hash` of every cell it touches."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    notebook_path: str
+    heading_path: tuple[str, ...]
+    pieces: tuple[Piece, ...]
+    text: str
+    tokens: int = Field(ge=0)
+    flags: tuple[OversizeReason, ...] = ()
+    cell_hashes: tuple[str, ...]

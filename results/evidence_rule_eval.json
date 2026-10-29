@@ -1,0 +1,352 @@
+{
+  "schema_version": 2,
+  "git": {
+    "sha": "9ead3e53918b9952d0016736bb9ca91db239ce06",
+    "dirty": false
+  },
+  "config": {
+    "paths": {
+      "raw_dir": "data/rerag-data/notebooks",
+      "db_path": "data/noterecall.sqlite",
+      "results_dir": "results"
+    },
+    "logging": {
+      "level": "INFO"
+    },
+    "cleaning": {
+      "rules_path": "config/cleaning_rules.yaml",
+      "max_output_lines": 20
+    },
+    "tokenizer": {
+      "encoding": "cl100k_base"
+    },
+    "chunking": {
+      "candidate_caps": [
+        256,
+        512,
+        1024
+      ]
+    }
+  },
+  "tokenizer": "cl100k_base",
+  "tiktoken_version": "0.14.0",
+  "summary": {
+    "seed": 20261029,
+    "rule_fingerprint": "859eea67ec82000d69f0f060ec5a9bfbc89ede036548a1fa295ba883953676ed",
+    "population_kept": 434,
+    "population_dropped": 850,
+    "sampled_kept": 25,
+    "sampled_dropped": 25,
+    "labelled_evidence_in_kept": 11,
+    "labelled_evidence_in_dropped": 6,
+    "precision": 0.44,
+    "precision_wilson95": {
+      "low": 0.2666537494700256,
+      "high": 0.6293298298043557
+    },
+    "recall_weighted": 0.48349199918979135,
+    "evidence_prevalence_weighted": 0.30760124610591905
+  },
+  "items": [
+    {
+      "sample_id": 1,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 2,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 3,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 4,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 5,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 6,
+      "stratum": "dropped",
+      "rule_verdict": "table",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 7,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 8,
+      "stratum": "dropped",
+      "rule_verdict": "truncated",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 9,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 10,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 11,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 12,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 13,
+      "stratum": "dropped",
+      "rule_verdict": "array",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 14,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 15,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 16,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 17,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 18,
+      "stratum": "dropped",
+      "rule_verdict": "warning",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 19,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 20,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 21,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 22,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 23,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 24,
+      "stratum": "dropped",
+      "rule_verdict": "array",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 25,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 26,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 27,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 28,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 29,
+      "stratum": "dropped",
+      "rule_verdict": "object_repr",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 30,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 31,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 32,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 33,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 34,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 35,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 36,
+      "stratum": "dropped",
+      "rule_verdict": "object_repr",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 37,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 38,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 39,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 40,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 41,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 42,
+      "stratum": "dropped",
+      "rule_verdict": "truncated",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 43,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 44,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 45,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 46,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 47,
+      "stratum": "dropped",
+      "rule_verdict": "truncated",
+      "labelled_evidence": true
+    },
+    {
+      "sample_id": 48,
+      "stratum": "dropped",
+      "rule_verdict": "too_long",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 49,
+      "stratum": "kept",
+      "rule_verdict": "evidence",
+      "labelled_evidence": false
+    },
+    {
+      "sample_id": 50,
+      "stratum": "dropped",
+      "rule_verdict": "table",
+      "labelled_evidence": false
+    }
+  ]
+}

@@ -122,10 +122,11 @@ Hand-written retrieval, fusion and prompting (~a few hundred lines). *Reason:* e
 - **Data-decided:** LLM clean is ON only if it improves dev Recall@10 under the ADR-010 rule. Otherwise it ships OFF and that negative result goes in the README.
 *Amended by proposal 001, `docs/proposals/001-inline-base64-in-markdown.md` (approved by the owner): inline base64 data URIs in markdown cells.*
 
-### ADR-004 — Structure-aware chunking on cell boundaries
-A chunk = a markdown heading section and its following cells, split on **cell boundaries** when over the token cap; a single oversized code cell is split at blank lines / top-level `def`/`class`. Code and the markdown that explains it stay together. Code cells are never split mid-statement.
+### ADR-004 — Structure-aware chunking on cell boundaries (amended by proposal 002)
+A chunk = a markdown heading section and its following cells, split on **cell boundaries** when over the token cap. A single oversized cell is split at its natural units (amended by proposal 002): one top-level statement is the smallest unit of code, and markdown is split at paragraphs, then sentences; a fenced code block inside a markdown cell is never split. A chunk may exceed the cap only if it is a single indivisible unit, and it is then flagged. Code and the markdown that explains it stay together. Code cells are never split mid-statement. Cell outputs are never part of chunk text; they are kept in the database (final decision, proposal 002).
 *Evidence:* Chroma's chunking study found splitter choice moves recall by several points and that simple structure-respecting splitters are competitive with LLM-based ones; a 2026 taxonomy paper (arXiv 2602.16974) found simple structure-based methods beat LLM-guided chunking for in-corpus retrieval. Notebooks have explicit structure — use it.
 **Data-decided:** token cap ∈ {256, 512, 1024}; compared against the fixed-token baseline **at equal retrieved-token budget** (bigger chunks trivially inflate Recall@k).
+*Amended by proposal 002, `docs/proposals/002-chunk-split-units.md` (approved by the owner): split units for oversized cells, the oversize flag, and the output policy (outputs excluded from chunks).*
 
 ### ADR-005 — Hybrid retrieval: BM25 + dense, fused with RRF
 *Evidence:* BEIR showed BM25 is a robust zero-shot baseline that many dense models fail to beat out of domain; BM25 and dense fail on different queries (identifiers like `train_test_split` vs paraphrases). RRF (Cormack, Clarke & Büttcher, SIGIR 2009) fuses on ranks, so incomparable score scales don't matter.

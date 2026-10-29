@@ -41,3 +41,20 @@ def test_download_failure_becomes_a_tokenizer_error(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr("noterecall.chunking.tokens.tiktoken.get_encoding", offline)
     with pytest.raises(TokenizerError, match="proxy said no"):
         load_tokenizer("cl100k_base")
+
+
+def test_token_starts_report_character_offsets(tiny_tokenizer: Tokenizer) -> None:
+    # "aé€b": a (1 byte), é (2 bytes), € (3 bytes), b (1 byte) = 7 tokens. A token that begins
+    # inside a character reports that character's start offset.
+    assert tiny_tokenizer.token_starts("aé€b") == [0, 1, 1, 2, 2, 2, 3]
+    assert tiny_tokenizer.token_starts("") == []
+
+
+def test_token_starts_refuse_a_lossy_decode(
+    tiny_tokenizer: Tokenizer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        tiny_tokenizer._encoding, "decode_with_offsets", lambda _t: ("different", [0])
+    )
+    with pytest.raises(TokenizerError, match="did not reproduce"):
+        tiny_tokenizer.token_starts("text")

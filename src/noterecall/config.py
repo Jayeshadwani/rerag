@@ -9,7 +9,7 @@ raise `ConfigError`; nothing falls back silently.
 
 import tomllib
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import (
@@ -60,6 +60,14 @@ class TokenizerConfig(BaseModel):
     encoding: str
 
 
+class ChunkingConfig(BaseModel):
+    """Chunking parameters. The cap is data-decided in M4, so only the candidates live here."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    candidate_caps: tuple[Annotated[int, Field(ge=1)], ...] = Field(min_length=1)
+
+
 class Settings(BaseSettings):
     """Validated application settings."""
 
@@ -74,6 +82,7 @@ class Settings(BaseSettings):
     logging: LoggingConfig
     cleaning: CleaningConfig
     tokenizer: TokenizerConfig
+    chunking: ChunkingConfig
 
     @classmethod
     def settings_customise_sources(
