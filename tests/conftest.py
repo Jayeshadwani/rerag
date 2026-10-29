@@ -4,8 +4,13 @@ import os
 
 import pytest
 import tiktoken
+from hypothesis import settings
 
 from noterecall.chunking.tokens import Tokenizer
+
+# Deterministic property tests: the same examples every run (ADR-015 reproducibility).
+settings.register_profile("noterecall", derandomize=True, max_examples=200, deadline=None)
+settings.load_profile("noterecall")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

@@ -47,6 +47,9 @@ max_output_lines = 20
 
 [tokenizer]
 encoding = "tiny-bytes"
+
+[chunking]
+candidate_caps = [64, 128]
 """,
         encoding="utf-8",
     )

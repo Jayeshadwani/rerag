@@ -21,6 +21,9 @@ max_output_lines = 5
 
 [tokenizer]
 encoding = "tiny"
+
+[chunking]
+candidate_caps = [8, 16]
 """
 
 
@@ -51,6 +54,7 @@ def test_default_config_file_loads() -> None:
     assert settings.cleaning.rules_path == Path("config/cleaning_rules.yaml")
     assert settings.cleaning.max_output_lines == 20
     assert settings.tokenizer.encoding == "cl100k_base"
+    assert settings.chunking.candidate_caps == (256, 512, 1024)
 
 
 def test_default_db_is_outside_the_data_repo() -> None:
@@ -131,3 +135,10 @@ def test_env_overrides_nested_cleaning_value(
 ) -> None:
     monkeypatch.setenv("NOTERECALL_CLEANING__MAX_OUTPUT_LINES", "7")
     assert load_settings(_write(tmp_path, VALID_TOML)).cleaning.max_output_lines == 7
+
+
+@pytest.mark.parametrize("value", ["[]", "[0]", "[256, -1]"])
+def test_candidate_caps_must_be_positive_and_non_empty(tmp_path: Path, value: str) -> None:
+    text = VALID_TOML.replace("candidate_caps = [8, 16]", f"candidate_caps = {value}")
+    with pytest.raises(ConfigError, match="candidate_caps"):
+        load_settings(_write(tmp_path, text))

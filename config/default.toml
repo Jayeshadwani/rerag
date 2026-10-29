@@ -15,3 +15,7 @@ max_output_lines = 20
 
 [tokenizer]
 encoding = "cl100k_base"
+
+[chunking]
+# ADR-004 candidates. The cap that ships is chosen in M4 by the ADR-010 rule, not here.
+candidate_caps = [256, 512, 1024]
