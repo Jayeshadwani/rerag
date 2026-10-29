@@ -8,12 +8,13 @@ never deleted. Reading never writes: opening an up-to-date database performs no 
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict
 
-from noterecall.models import Notebook
+from noterecall.models import Cell, CellType, Notebook
 
 SCHEMA_VERSION = 1
 
@@ -180,3 +181,30 @@ def duplicate_counts(conn: sqlite3.Connection) -> DuplicateCounts:
         " coalesce(sum(notebook_path != canonical_notebook), 0) FROM duplicate_cells"
     ).fetchone()
     return DuplicateCounts(within_notebook=int(row[0]), across_notebooks=int(row[1]))
+
+
+def notebook_cells(conn: sqlite3.Connection) -> Iterator[tuple[str, list[Cell]]]:
+    """Each notebook's stored cells in cell order, notebooks in path order."""
+    current: str | None = None
+    cells: list[Cell] = []
+    query = (
+        "SELECT notebook_path, idx, cell_type, raw_hash, clean_hash, source, output_text"
+        " FROM cells ORDER BY notebook_path, idx"
+    )
+    for path, idx, cell_type, raw_hash, clean_hash, source, output_text in conn.execute(query):
+        if current is not None and path != current:
+            yield current, cells
+            cells = []
+        current = path
+        cells.append(
+            Cell(
+                index=idx,
+                cell_type=CellType(cell_type),
+                raw_hash=raw_hash,
+                clean_hash=clean_hash,
+                source=source,
+                output_text=output_text,
+            )
+        )
+    if current is not None:
+        yield current, cells
