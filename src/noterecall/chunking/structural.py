@@ -5,10 +5,8 @@ blocks); a cell is never split across sections. Within a section, cells are pack
 order, into chunks of at most `cap` tokens, counted on the rendered chunk text. A cell that alone
 exceeds the cap is cut into pieces (statements, or paragraphs then sentences, with fenced blocks
 kept whole). A chunk may exceed the cap only if it is one indivisible piece; it is then flagged.
-Outputs are included according to `OutputMode` (excluded by default). An output is one piece
-that always sits directly after the code piece that produced it, in the same chunk: it is never a
-chunk's first piece and never split from its code. An output that cannot fit under the cap
-together with that code piece is left out (when in doubt, exclude).
+Cell outputs are never part of chunk text (proposal 002, final decision); they stay in the
+database.
 """
 
 import hashlib
@@ -16,7 +14,6 @@ import json
 from collections.abc import Sequence
 from typing import NamedTuple
 
-from noterecall.chunking.evidence import is_evidence_output
 from noterecall.chunking.splitters import (
     Heading,
     code_statement_spans,
@@ -29,14 +26,13 @@ from noterecall.models import (
     Cell,
     CellType,
     Chunk,
-    OutputMode,
     OversizeReason,
     Piece,
     PieceKind,
     PieceUnit,
 )
 
-CHUNKER = "structural-2"
+CHUNKER = "structural-3"
 
 _REASONS = {
     PieceUnit.STATEMENT: OversizeReason.STATEMENT,
@@ -147,63 +143,34 @@ class _Splitter:
             )
         return pieces
 
-    def output(self, cell: Cell, code: Piece) -> list[Piece]:
-        """The cell's output as one piece, or none if it does not fit with its code piece."""
-        piece = self._piece(cell, PieceKind.OUTPUT, 0, PieceUnit.CELL, cell.output_text)
-        if self.tokenizer.count(render([code, piece])) > self.cap:
-            return []
-        return [piece]
 
-
-def wants_output(cell: Cell, mode: OutputMode, tokenizer: Tokenizer) -> bool:
-    if mode is OutputMode.NONE or not cell.output_text.strip():
-        return False
-    return mode is OutputMode.ALL or is_evidence_output(cell.output_text, tokenizer)
-
-
-def cell_pieces(cell: Cell, splitter: _Splitter, mode: OutputMode) -> list[Piece]:
-    """All pieces of one cell, in order: its source, then (per `mode`) its output.
-
-    An output exists only after code: a cell with no code yields no output piece.
-    """
+def cell_pieces(cell: Cell, splitter: _Splitter) -> list[Piece]:
+    """All pieces of one cell's source, in order. Outputs are not chunked."""
     if not cell.source.strip():
         return []
-    is_code = cell.cell_type is CellType.CODE
-    pieces = (splitter.code if is_code else splitter.markdown)(cell)
-    if is_code and wants_output(cell, mode, splitter.tokenizer):
-        pieces.extend(splitter.output(cell, pieces[-1]))
-    return pieces
+    cut = splitter.code if cell.cell_type is CellType.CODE else splitter.markdown
+    return cut(cell)
 
 
 def pack(pieces: Sequence[Piece], cap: int, tokenizer: Tokenizer) -> list[list[Piece]]:
-    """Greedy, order-preserving packing. Only a lone piece can exceed the cap.
-
-    An output piece never starts a chunk: when it does not fit, the code piece before it moves
-    to the new chunk with it (`cell_pieces` guarantees the two fit together).
-    """
+    """Greedy, order-preserving packing. Only a lone piece can exceed the cap."""
     groups: list[list[Piece]] = []
     current: list[Piece] = []
     for piece in pieces:
         if current and tokenizer.count(render([*current, piece])) > cap:
-            carried = []
-            if piece.kind is PieceKind.OUTPUT:
-                if len(current) == 1:
-                    raise ChunkingError("an output piece does not fit with its code piece")
-                carried = [current.pop()]
             groups.append(current)
-            current = carried
+            current = []
         current.append(piece)
     if current:
         groups.append(current)
     return groups
 
 
-def chunk_id(notebook_path: str, cap: int, mode: OutputMode, pieces: Sequence[Piece]) -> str:
-    """Deterministic id from the chunker, cap, output mode, notebook and the exact pieces."""
+def chunk_id(notebook_path: str, cap: int, pieces: Sequence[Piece]) -> str:
+    """Deterministic id from the chunker, cap, notebook and the exact pieces."""
     payload = {
         "chunker": CHUNKER,
         "cap": cap,
-        "outputs": mode.value,
         "notebook": notebook_path,
         "pieces": [
             [p.cell_index, p.kind.value, p.part, hashlib.sha256(p.text.encode()).hexdigest()]
@@ -226,7 +193,7 @@ def _build_chunk(group: list[Piece], section: Section, ctx: "_Context") -> Chunk
     text = render(group)
     tokens = ctx.tokenizer.count(text)
     return Chunk(
-        id=chunk_id(ctx.notebook_path, ctx.cap, ctx.mode, group),
+        id=chunk_id(ctx.notebook_path, ctx.cap, group),
         notebook_path=ctx.notebook_path,
         heading_path=section.path,
         pieces=tuple(group),
@@ -240,7 +207,6 @@ def _build_chunk(group: list[Piece], section: Section, ctx: "_Context") -> Chunk
 class _Context(NamedTuple):
     notebook_path: str
     cap: int
-    mode: OutputMode
     tokenizer: Tokenizer
     raw_hashes: dict[int, str]
 
@@ -250,13 +216,12 @@ def chunk_notebook(
     cells: Sequence[Cell],
     cap: int,
     tokenizer: Tokenizer,
-    outputs: OutputMode = OutputMode.NONE,
 ) -> list[Chunk]:
     """Chunk one notebook's cleaned cells (in cell order) with the given token cap."""
-    ctx = _Context(notebook_path, cap, outputs, tokenizer, {c.index: c.raw_hash for c in cells})
+    ctx = _Context(notebook_path, cap, tokenizer, {c.index: c.raw_hash for c in cells})
     splitter = _Splitter(cap, tokenizer)
     chunks: list[Chunk] = []
     for section in build_sections(cells):
-        pieces = [p for cell in section.cells for p in cell_pieces(cell, splitter, outputs)]
+        pieces = [p for cell in section.cells for p in cell_pieces(cell, splitter)]
         chunks.extend(_build_chunk(group, section, ctx) for group in pack(pieces, cap, tokenizer))
     return chunks

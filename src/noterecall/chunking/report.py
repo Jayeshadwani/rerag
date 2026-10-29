@@ -1,7 +1,7 @@
 """Chunk statistics report for `results/chunk_stats.json`. Supports ADR-004 and proposal 002.
 
-For each candidate cap (from config) and output mode it chunks the whole stored corpus with the
-structural chunker, and with the fixed-token baseline (outputs excluded), and records aggregate
+For each candidate cap (from config) it chunks the whole stored corpus with the structural
+chunker and with the fixed-token baseline (outputs are never chunked), and records aggregate
 counts: how many chunks, how big, how many were flagged oversized and why, how many cells had to
 be split. Descriptive only: it does not choose the cap (that is the M4 experiment). No note text,
 file names or per-notebook rows.
@@ -16,14 +16,13 @@ from typing import Any, Literal
 import tiktoken
 from pydantic import BaseModel, ConfigDict
 
-from noterecall.chunking.evidence import EvidenceVerdict, judge_output, rule_fingerprint
 from noterecall.chunking.fixed import fixed_chunks
 from noterecall.chunking.structural import chunk_notebook
 from noterecall.chunking.tokens import Tokenizer
 from noterecall.config import Settings
 from noterecall.index.store import notebook_cells, pipeline_hashes
 from noterecall.ingest.stats import GitState, Provenance, StatsError
-from noterecall.models import Cell, CellType, Chunk, OutputMode, OversizeReason, PieceUnit
+from noterecall.models import Chunk, OversizeReason, PieceUnit
 
 
 class ChunkSizes(BaseModel):
@@ -44,7 +43,6 @@ class ChunkRow(BaseModel):
 
     chunker: Literal["structural", "fixed"]
     cap: int
-    outputs: OutputMode
     chunks: int
     tokens: ChunkSizes
     under_quarter_cap: int
@@ -58,16 +56,14 @@ class ChunkStats(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     git: GitState
     config: dict[str, Any]
     pipeline_hash: str
     tokenizer: str
     tiktoken_version: str
-    evidence_rule_fingerprint: str
     notebooks: int
     cells: int
-    outputs_by_verdict: dict[str, int]
     rows: list[ChunkRow]
 
 
@@ -102,12 +98,11 @@ class _Accumulator:
         self.cells_split += sum(1 for ids in chunks_of_cell.values() if len(ids) > 1)
         self.unparsed_cells += len(unparsed)
 
-    def row(self, chunker: Literal["structural", "fixed"], cap: int, mode: OutputMode) -> ChunkRow:
+    def row(self, chunker: Literal["structural", "fixed"], cap: int) -> ChunkRow:
         flagged = {reason.value: self.flags.get(reason.value, 0) for reason in OversizeReason}
         return ChunkRow(
             chunker=chunker,
             cap=cap,
-            outputs=mode,
             chunks=len(self.tokens),
             tokens=sizes(self.tokens),
             under_quarter_cap=sum(1 for t in self.tokens if t < cap / 4),
@@ -115,24 +110,6 @@ class _Accumulator:
             cells_split=self.cells_split,
             unparsed_code_cells=self.unparsed_cells,
         )
-
-
-def _configs(caps: Sequence[int]) -> list[tuple[Literal["structural", "fixed"], int, OutputMode]]:
-    structural = [("structural", cap, mode) for cap in caps for mode in OutputMode]
-    fixed = [("fixed", cap, OutputMode.NONE) for cap in caps]
-    return [*structural, *fixed]  # type: ignore[list-item]
-
-
-def output_verdicts(
-    notebooks: Sequence[tuple[str, list[Cell]]], tokenizer: Tokenizer
-) -> dict[str, int]:
-    """How the evidence rule judges every non-empty code-cell output, by verdict."""
-    counts: Counter[str] = Counter()
-    for _path, cells in notebooks:
-        for cell in cells:
-            if cell.cell_type is CellType.CODE and cell.output_text.strip():
-                counts[judge_output(cell.output_text, tokenizer).value] += 1
-    return {verdict.value: counts.get(verdict.value, 0) for verdict in EvidenceVerdict}
 
 
 def compute_chunk_stats(
@@ -145,22 +122,21 @@ def compute_chunk_stats(
     if pipeline_hashes(conn) != {provenance.pipeline_hash}:
         raise StatsError("the database was synced with a different pipeline; re-run `sync`")
     rows: list[ChunkRow] = []
-    for chunker, cap, mode in _configs(settings.chunking.candidate_caps):
-        acc = _Accumulator()
-        for path, cells in notebooks:
-            make = chunk_notebook if chunker == "structural" else fixed_chunks
-            acc.add(make(path, cells, cap, tokenizer, mode))
-        rows.append(acc.row(chunker, cap, mode))
+    for chunker in ("structural", "fixed"):
+        for cap in settings.chunking.candidate_caps:
+            acc = _Accumulator()
+            for path, cells in notebooks:
+                make = chunk_notebook if chunker == "structural" else fixed_chunks
+                acc.add(make(path, cells, cap, tokenizer))
+            rows.append(acc.row(chunker, cap))
     return ChunkStats(
-        schema_version=1,
+        schema_version=2,
         git=provenance.git,
         config=settings.model_dump(mode="json"),
         pipeline_hash=provenance.pipeline_hash,
         tokenizer=provenance.tokenizer_name,
         tiktoken_version=tiktoken.__version__,
-        evidence_rule_fingerprint=rule_fingerprint(),
         notebooks=len(notebooks),
         cells=sum(len(cells) for _path, cells in notebooks),
-        outputs_by_verdict=output_verdicts(notebooks, tokenizer),
         rows=rows,
     )

@@ -4,7 +4,7 @@ import pytest
 
 from noterecall.chunking.fixed import fixed_chunks
 from noterecall.chunking.tokens import Tokenizer
-from noterecall.models import Cell, CellType, OutputMode, PieceKind, PieceUnit
+from noterecall.models import Cell, CellType, PieceKind, PieceUnit
 
 
 def cell(index: int, cell_type: CellType, source: str, output: str = "") -> Cell:
@@ -69,13 +69,12 @@ def test_windows_made_only_of_one_moved_character_are_skipped(tiny_tokenizer: To
     ]  # the three one-token windows all start at the same character
 
 
-def test_outputs_follow_the_output_mode(tiny_tokenizer: Tokenizer) -> None:
+def test_outputs_are_never_part_of_the_stream(tiny_tokenizer: Tokenizer) -> None:
     cells = [cell(0, CellType.CODE, "x = 6 * 7", output="42")]
-    (without,) = fixed_chunks("nb", cells, 1000, tiny_tokenizer)
-    (with_all,) = fixed_chunks("nb", cells, 1000, tiny_tokenizer, OutputMode.ALL)
-    assert without.text == "x = 6 * 7"
-    assert with_all.text == "x = 6 * 7\n\n42"
-    assert [p.kind for p in with_all.pieces] == [PieceKind.CODE, PieceKind.OUTPUT]
+    (chunk,) = fixed_chunks("nb", cells, 1000, tiny_tokenizer)
+    assert chunk.text == "x = 6 * 7"
+    assert [p.kind for p in chunk.pieces] == [PieceKind.CODE]
+    assert fixed_chunks("nb", [cell(0, CellType.CODE, "", output="42")], 1000, tiny_tokenizer) == []
 
 
 def test_ids_are_deterministic_and_sensitive(tiny_tokenizer: Tokenizer) -> None:

@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from noterecall.chunking.evidence_check import EvidenceEval, EvidenceReport, Interval
 from noterecall.chunking.report import ChunkRow, ChunkSizes, ChunkStats
 from noterecall.ingest.stats import (
     CorpusStats,
@@ -12,8 +11,15 @@ from noterecall.ingest.stats import (
     GitState,
     TokenTotals,
 )
-from noterecall.models import OutputMode
-from render_results import main, render_chunk_stats, render_corpus_stats, render_evidence_eval
+from render_results import (
+    EvidenceEval,
+    EvidenceReport,
+    Interval,
+    main,
+    render_chunk_stats,
+    render_corpus_stats,
+    render_evidence_eval,
+)
 
 
 def _stats(raw: int = 200, clean: int = 150, secrets: dict[str, int] | None = None) -> CorpusStats:
@@ -86,7 +92,6 @@ def _chunk_stats() -> ChunkStats:
     row = ChunkRow(
         chunker="structural",
         cap=256,
-        outputs=OutputMode.NONE,
         chunks=3300,
         tokens=ChunkSizes(min=3, median=157.5, p90=250, max=2999),
         under_quarter_cap=705,
@@ -95,27 +100,23 @@ def _chunk_stats() -> ChunkStats:
         unparsed_code_cells=7,
     )
     return ChunkStats(
-        schema_version=1,
+        schema_version=2,
         git=GitState(sha="f" * 40, dirty=False),
         config={},
         pipeline_hash="p" * 64,
         tokenizer="cl100k_base",
         tiktoken_version="0",
-        evidence_rule_fingerprint="e" * 64,
         notebooks=53,
         cells=6061,
-        outputs_by_verdict={"evidence": 100, "too_long": 900},
         rows=[row],
     )
 
 
 def test_chunk_stats_table_shows_every_number_from_the_file() -> None:
     text = render_chunk_stats(_chunk_stats())
-    row = "| structural | 256 | none | 3,300 | 3 / 157.5 / 250 / 2,999 | 705 |"
+    row = "| structural | 256 | 3,300 | 3 / 157.5 / 250 / 2,999 | 705 |"
     assert row + " statement 37, sentence 19 | 630 | 7 |" in text
-    assert "| evidence | 100 |" in text
-    assert "| too_long | 900 |" in text
-    assert "53 notebooks, 6,061 cells. Commit `ffffffffffff`, rule `eeeeeeeeeeee`." in text
+    assert "53 notebooks, 6,061 cells. Commit `ffffffffffff`." in text
 
 
 def _evaluation(precision: float | None = 0.8) -> EvidenceEval:
@@ -153,13 +154,8 @@ def test_main_dispatches_on_the_kind_of_results_file(
     chunks.write_text(_chunk_stats().model_dump_json(), encoding="utf-8")
     evaluation = tmp_path / "eval.json"
     report = EvidenceReport(
-        schema_version=2,
         git=GitState(sha="a" * 40, dirty=False),
-        config={},
-        tokenizer="cl100k_base",
-        tiktoken_version="0",
         summary=_evaluation(),
-        items=(),
     )
     evaluation.write_text(report.model_dump_json(), encoding="utf-8")
     assert main([str(chunks)]) == 0

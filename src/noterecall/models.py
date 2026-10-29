@@ -91,7 +91,6 @@ class PieceKind(StrEnum):
 
     MARKDOWN = "markdown"
     CODE = "code"
-    OUTPUT = "output"
 
 
 class PieceUnit(StrEnum):
@@ -113,14 +112,6 @@ class OversizeReason(StrEnum):
     SENTENCE = "sentence"
     FENCED_BLOCK = "fenced_block"
     UNPARSED_CODE = "unparsed_code"
-
-
-class OutputMode(StrEnum):
-    """Which cell outputs go into chunk text (proposal 002, M4 ablation arms A, B, C)."""
-
-    NONE = "none"
-    ALL = "all"
-    EVIDENCE = "evidence"
 
 
 class Piece(BaseModel):

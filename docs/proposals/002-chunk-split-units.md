@@ -1,6 +1,7 @@
 # Proposal 002: chunk split units, oversize flag, and the output policy
 
-Status: **approved by the owner.** Implemented on branch `m2-chunking`.
+Status: **approved by the owner.** Implemented on branch `m2-chunking`. The output policy was
+settled by the owner's final decision below (outputs are never chunked).
 ADR affected: ADR-004 (structure-aware chunking), amended in `PLAN.md` and `docs/adr/ADR-004.md`.
 
 ## Problem
@@ -42,55 +43,64 @@ Also fixed in M2 (no ADR text change needed): sections are flat (any ATX heading
 small sections are not merged, a cell with several headings is atomic, setext headings are
 ignored, and the fixed-token baseline uses no overlap.
 
-## Output policy
+## Output policy: final decision (owner)
 
-Principle (owner): an output belongs in chunk text only if it is evidence needed to understand a
-concept or conclusion.
+**Code-cell outputs are excluded from chunk text, permanently.** They stay in the database
+(stored by M1) and neither chunker uses them, the fixed-token baseline included. There are no
+output modes.
 
-- **Default for M2: outputs are excluded from chunk text.** They stay in the database, and the
-  chunker has an output-mode switch.
-- **Evidence rule (deterministic, proposed).** Short text (at most 64 tokens) that is not
-  table-shaped, not a long array, not a warning, not a progress bar, not an object repr, and not
-  truncated. The stored text does not record whether an output came from `print` or from a final
-  value, so the rule judges the text alone. It was designed from the principle and aggregate
-  pattern counts, without reading individual outputs, and frozen before the validation sample was
-  drawn. Its precision and recall against the owner's labels are reported separately.
+Original principle (owner): an output belongs in chunk text only if it is evidence needed to
+understand a concept or conclusion. Outputs were first excluded by default, with a deterministic
+"evidence" rule proposed and validated against the owner's labels before any decision to include
+some. The measured result (`results/evidence_rule_eval.json`, 50 outputs in two strata, labels
+by the owner with borderline counted as noise):
 
-## M4 ablation to record
+Rendered by `scripts/render_results.py` from that file:
 
-Three arms, chosen by the ADR-010 rule on the dev split:
+| Evidence rule vs owner labels | Value |
+|---|---:|
+| Outputs the rule keeps / drops (population) | 434 / 850 |
+| Sampled from each | 25 / 25 |
+| Labelled evidence among sampled kept | 11 |
+| Labelled evidence among sampled dropped | 6 |
+| Precision (kept that are evidence) | 44.0% (95% Wilson 26.7% to 62.9%) |
+| Recall (evidence that is kept, weighted to the population) | 48.3% |
+| Evidence prevalence (weighted) | 30.8% |
 
-| Arm | Chunk text contains |
-|---|---|
-| A | no outputs (the M2 default) |
-| B | all outputs |
-| C | evidence-only outputs (the rule above) |
+Sampling seed 20261029, rule `859eea67ec82`.
 
-The arm is a parameter of the chunker, not a code change, so the arms differ only in what text
-goes into the index. Chunk caps (256, 512, 1024) and the fixed-token baseline are compared as before.
+Reasoning: no simple rule separates evidence from noise, and an ambiguous output in chunk text
+risks the LLM grounding an answer on it. The principle is "only clear evidence; when in doubt,
+exclude", and nothing measured can meet it. So the policy is the simplest one that satisfies it.
+
+Consequences:
+
+- The 3-way output ablation (no outputs / all outputs / evidence-only) that this proposal first
+  recorded for M4 is **dropped**. M4 compares only chunk caps and the fixed-token baseline.
+- The evidence rule, its sampling and its evaluation commands are removed from `src/`
+  (the rule is in git history at commit `810e07c`, which also holds the code that produced the
+  record below). `OutputMode`, the output piece kind, output-line splitting and the
+  "an output follows its code" placement logic that briefly existed during M2 are removed with it:
+  with no outputs in chunks the invariant holds trivially, and a property test now checks that no
+  output text can reach either chunker's output.
+- Chunk IDs no longer depend on an output mode; chunker versions are `structural-3` and `fixed-2`.
+- A future change (for example a different rule, or outputs attached as separate metadata) needs
+  a new proposal and a fresh labelled sample; the 50 labels used here are spent for tuning.
+- Retrieval may still look outputs up in the database later (for example to display them next to
+  a retrieved chunk); this proposal only decides what is indexed.
+
+### Record of the negative result
+
+`results/evidence_rule_eval.json` is kept as the record. It holds the metrics, the sampling seed,
+the rule fingerprint, the git SHA of the clean tree it was produced from (`9ead3e5`, which still
+contains the rule and the commands), the config snapshot, the tokenizer and `tiktoken` version,
+and one row per sampled item: stratum, the rule's verdict category and the owner's label. It holds
+no output text, no file names and no cell identifiers. The earlier version of the file, committed
+in `06da9bf`, had the same metrics but lacked the metadata and per-item scores.
+
+The sample manifest and the labels stay under the git-ignored `data/evidence/`.
 
 ## Impact
 
 - ADR-004 text amended (see its heading and note). No other ADR changes.
-- `raw_hash`, the gold-set cell identity, is unaffected: labels stay valid under every arm and cap.
-- Chunk IDs depend on the output mode, since the chunk text differs.
-
-## Addendum: where an output may sit (owner decision, after the labelling round)
-
-Principle: only outputs that are clear evidence belong in chunk text; when in doubt, exclude, so
-the LLM never grounds an answer on an ambiguous output. For arms B and C this adds an invariant:
-
-- An output is one piece. It always sits in the same chunk as the code that produced it, directly
-  after the last piece of that code. It is never a chunk's first piece and never split from its
-  code, so a bare output with no code above it cannot exist.
-- If the output does not fit under the cap together with that last code piece, it is left out
-  (not truncated, not split). Arm B is therefore "all outputs that fit with their code", and the
-  M4 result must be read that way.
-- An output of a cell with no code is never emitted.
-- Consequently outputs are no longer cut at lines, and `output_line` is no longer a split unit or
-  an oversize reason. An output can no longer make a chunk exceed the cap.
-- The fixed-token baseline is structure-blind by definition and is not covered: a window may begin
-  at an output. It is never used in production.
-
-Tested by a property test (`test_an_output_always_directly_follows_the_code_that_produced_it`)
-and unit tests. The chunker version is `structural-2`, so chunk IDs differ from `structural-1`.
+- `raw_hash`, the gold-set cell identity, is unaffected: labels stay valid under every cap.

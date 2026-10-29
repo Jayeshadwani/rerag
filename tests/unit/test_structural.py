@@ -16,7 +16,6 @@ from noterecall.chunking.tokens import Tokenizer
 from noterecall.models import (
     Cell,
     CellType,
-    OutputMode,
     OversizeReason,
     Piece,
     PieceKind,
@@ -162,57 +161,16 @@ def test_fenced_block_is_never_split_even_when_too_large(tiny_tokenizer: Tokeniz
     assert chunk.flags == (OversizeReason.FENCED_BLOCK,)  # 3+1+5+1+5+1+5+1+3 = 25 > 10
 
 
-def test_outputs_are_excluded_by_default(tiny_tokenizer: Tokenizer) -> None:
-    c = cell(0, CODE, "x = 6 * 7", output="42")
-    (none,) = chunk_notebook("nb", [c], 100, tiny_tokenizer)
-    assert none.text == "x = 6 * 7"
-    (everything,) = chunk_notebook("nb", [c], 100, tiny_tokenizer, OutputMode.ALL)
-    assert everything.text == "x = 6 * 7\n\n42"
-    assert [p.kind for p in everything.pieces] == [PieceKind.CODE, PieceKind.OUTPUT]
-
-
-def test_evidence_mode_keeps_only_evidence_outputs(tiny_tokenizer: Tokenizer) -> None:
-    kept = cell(0, CODE, "print(6 * 7)", output="42")
-    dropped = cell(1, CODE, "import warnings", output="UserWarning: something is deprecated")
-    chunks = chunk_notebook("nb", [kept, dropped], 1000, tiny_tokenizer, OutputMode.EVIDENCE)
-    assert [c.text for c in chunks] == ["print(6 * 7)\n\n42\n\nimport warnings"]
-    everything = chunk_notebook("nb", [kept, dropped], 1000, tiny_tokenizer, OutputMode.ALL)
-    assert "UserWarning" in everything[0].text
-
-
-def test_output_that_does_not_fit_with_its_code_is_left_out(tiny_tokenizer: Tokenizer) -> None:
-    c = cell(0, CODE, "x = 1", output="line1\nline2\nline3")
-    # code 5 + blank line 2 + output 17 = 24 bytes
-    (fits,) = chunk_notebook("nb", [c], 24, tiny_tokenizer, OutputMode.ALL)
-    assert fits.text == "x = 1\n\nline1\nline2\nline3"
-    (left_out,) = chunk_notebook("nb", [c], 23, tiny_tokenizer, OutputMode.ALL)
-    assert left_out.text == "x = 1"
-
-
-def test_output_never_starts_a_chunk_and_moves_with_its_code(tiny_tokenizer: Tokenizer) -> None:
-    cells = [cell(0, CODE, "a = 1"), cell(1, CODE, "b = 2", output="2")]
-    # "a = 1\n\nb = 2" is 12 bytes and fits in 12; adding "\n\n2" makes 15 > 12.
-    chunks = chunk_notebook("nb", cells, 12, tiny_tokenizer, OutputMode.ALL)
-    assert [c.text for c in chunks] == ["a = 1", "b = 2\n\n2"]  # b = 2 travels with its output
-    assert chunks[1].pieces[0].kind is PieceKind.CODE
-
-
-def test_output_follows_the_last_statement_of_a_split_cell(tiny_tokenizer: Tokenizer) -> None:
-    c = cell(0, CODE, "a = 1\nb = 2\nc = 3", output="3")
-    # whole cell is 17 bytes; with output 20. Cap 14: the cell is split at statements.
-    chunks = chunk_notebook("nb", [c], 14, tiny_tokenizer, OutputMode.ALL)
-    assert [c.text for c in chunks] == ["a = 1\nb = 2", "c = 3\n\n3"]
-
-
-def test_output_without_code_is_never_emitted(tiny_tokenizer: Tokenizer) -> None:
-    for mode in (OutputMode.ALL, OutputMode.EVIDENCE):
-        assert (
-            chunk_notebook("nb", [cell(0, CODE, "", output="42")], 100, tiny_tokenizer, mode) == []
-        )
-        assert (
-            chunk_notebook("nb", [cell(0, CODE, "  \n", output="42")], 100, tiny_tokenizer, mode)
-            == []
-        )
+def test_outputs_are_never_part_of_chunk_text(tiny_tokenizer: Tokenizer) -> None:
+    """Proposal 002 final decision: outputs stay in the database and are never chunked."""
+    cells = [
+        cell(0, CODE, "x = 6 * 7", output="42"),
+        cell(1, CODE, "", output="bare-output"),
+        cell(2, CODE, "print(x)", output="UserWarning: something is deprecated"),
+    ]
+    chunks = chunk_notebook("nb", cells, 1000, tiny_tokenizer)
+    assert [c.text for c in chunks] == ["x = 6 * 7\n\nprint(x)"]
+    assert {p.kind for c in chunks for p in c.pieces} == {PieceKind.CODE}
 
 
 def test_empty_inputs_give_no_chunks(tiny_tokenizer: Tokenizer) -> None:
@@ -226,19 +184,16 @@ def test_ids_are_deterministic_and_sensitive(tiny_tokenizer: Tokenizer) -> None:
     assert [c.id for c in first] == [c.id for c in chunk_notebook("nb", cells, 100, tiny_tokenizer)]
     assert len(first[0].id) == 16
     other_cap = chunk_notebook("nb", cells, 101, tiny_tokenizer)
-    other_mode = chunk_notebook("nb", cells, 100, tiny_tokenizer, OutputMode.ALL)
     other_path = chunk_notebook("other", cells, 100, tiny_tokenizer)
     edited = chunk_notebook("nb", [cells[0], cell(1, CODE, "x = 2")], 100, tiny_tokenizer)
-    ids = {c[0].id for c in (first, other_cap, other_mode, other_path, edited)}
-    assert len(ids) == 5
+    ids = {c[0].id for c in (first, other_cap, other_path, edited)}
+    assert len(ids) == 4
 
 
 def test_chunk_id_depends_on_piece_order_and_text() -> None:
     a = Piece(cell_index=0, kind=PieceKind.CODE, part=0, unit=PieceUnit.CELL, text="a")
     b = Piece(cell_index=1, kind=PieceKind.CODE, part=0, unit=PieceUnit.CELL, text="b")
-    assert chunk_id("nb", 10, OutputMode.NONE, [a, b]) != chunk_id(
-        "nb", 10, OutputMode.NONE, [b, a]
-    )
+    assert chunk_id("nb", 10, [a, b]) != chunk_id("nb", 10, [b, a])
 
 
 def test_render_joins_parts_of_one_cell_exactly_and_cells_with_a_blank_line() -> None:
@@ -276,11 +231,3 @@ def test_identical_cells_in_one_chunk_list_their_hash_once(tiny_tokenizer: Token
     (chunk,) = chunk_notebook("nb", [twin_a, twin_b], 1000, tiny_tokenizer)
     assert [p.cell_index for p in chunk.pieces] == [0, 1]  # both cells are in the chunk
     assert chunk.cell_hashes == ("raw0",)  # but the shared hash appears once
-
-
-def test_pack_refuses_an_output_that_cannot_sit_with_its_code(tiny_tokenizer: Tokenizer) -> None:
-    code = Piece(cell_index=0, kind=PieceKind.CODE, part=0, unit=PieceUnit.CELL, text="x = 1")
-    out = Piece(cell_index=0, kind=PieceKind.OUTPUT, part=0, unit=PieceUnit.CELL, text="42")
-    assert pack([code, out], 9, tiny_tokenizer) == [[code, out]]  # 5 + 2 + 2 = 9 fits
-    with pytest.raises(ChunkingError, match="does not fit with its code"):
-        pack([code, out], 8, tiny_tokenizer)

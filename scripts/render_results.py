@@ -12,11 +12,41 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from noterecall.chunking.evidence_check import EvidenceEval, EvidenceReport
 from noterecall.chunking.report import ChunkStats
-from noterecall.ingest.stats import CorpusStats, Distribution
+from noterecall.ingest.stats import CorpusStats, Distribution, GitState
+
+
+class Interval(BaseModel):
+    """A confidence interval, as stored in the evidence-rule record."""
+
+    low: float
+    high: float
+
+
+class EvidenceEval(BaseModel):
+    """The summary of the evidence-rule evaluation (a closed negative result; code removed)."""
+
+    seed: int
+    rule_fingerprint: str
+    population_kept: int
+    population_dropped: int
+    sampled_kept: int
+    sampled_dropped: int
+    labelled_evidence_in_kept: int
+    labelled_evidence_in_dropped: int
+    precision: float | None
+    precision_wilson95: Interval | None
+    recall_weighted: float | None
+    evidence_prevalence_weighted: float | None
+
+
+class EvidenceReport(BaseModel):
+    """`results/evidence_rule_eval.json`: only the parts the table needs are validated here."""
+
+    git: GitState
+    summary: EvidenceEval
 
 
 def _table(header: tuple[str, str], rows: list[tuple[str, str]]) -> str:
@@ -88,7 +118,6 @@ def render_chunk_stats(stats: ChunkStats) -> str:
             (
                 r.chunker,
                 _n(r.cap),
-                r.outputs.value,
                 _n(r.chunks),
                 spread,
                 _n(r.under_quarter_cap),
@@ -100,7 +129,6 @@ def render_chunk_stats(stats: ChunkStats) -> str:
     header = (
         "Chunker",
         "Cap",
-        "Outputs",
         "Chunks",
         "Tokens min / median / p90 / max",
         "Under cap/4",
@@ -108,15 +136,12 @@ def render_chunk_stats(stats: ChunkStats) -> str:
         "Cells split",
         "Unparsed code cells",
     )
-    verdicts = [(k, _n(v)) for k, v in stats.outputs_by_verdict.items()]
     return (
         "\n\n".join(
             [
                 _grid(header, rows),
-                _table(("Evidence rule verdict on stored outputs", "Count"), verdicts),
                 f"{_n(stats.notebooks)} notebooks, {_n(stats.cells)} cells. "
-                f"Commit `{stats.git.sha[:12]}`{' (dirty tree)' if stats.git.dirty else ''}, "
-                f"rule `{stats.evidence_rule_fingerprint[:12]}`.",
+                f"Commit `{stats.git.sha[:12]}`{' (dirty tree)' if stats.git.dirty else ''}.",
             ]
         )
         + "\n"

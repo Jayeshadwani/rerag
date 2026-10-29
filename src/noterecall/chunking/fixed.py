@@ -13,11 +13,10 @@ import json
 from collections.abc import Sequence
 from typing import NamedTuple
 
-from noterecall.chunking.structural import wants_output
 from noterecall.chunking.tokens import Tokenizer
-from noterecall.models import Cell, Chunk, OutputMode, Piece, PieceKind, PieceUnit
+from noterecall.models import Cell, Chunk, Piece, PieceKind, PieceUnit
 
-CHUNKER = "fixed-1"
+CHUNKER = "fixed-2"
 
 
 class _Segment(NamedTuple):
@@ -27,17 +26,13 @@ class _Segment(NamedTuple):
     end: int
 
 
-def _stream(
-    cells: Sequence[Cell], mode: OutputMode, tokenizer: Tokenizer
-) -> tuple[str, list[_Segment]]:
+def _stream(cells: Sequence[Cell]) -> tuple[str, list[_Segment]]:
     """The concatenated text and where each cell part sits in it."""
     parts: list[tuple[int, PieceKind, str]] = []
     for cell in cells:
         if cell.source.strip():
             kind = PieceKind.CODE if cell.cell_type.value == "code" else PieceKind.MARKDOWN
             parts.append((cell.index, kind, cell.source.strip("\n")))
-        if wants_output(cell, mode, tokenizer):
-            parts.append((cell.index, PieceKind.OUTPUT, cell.output_text.strip("\n")))
     segments: list[_Segment] = []
     offset = 0
     for index, kind, text in parts:
@@ -65,11 +60,10 @@ def _pieces(
     return pieces
 
 
-def _window_id(path: str, window: int, mode: OutputMode, span: tuple[int, int], text: str) -> str:
+def _window_id(path: str, window: int, span: tuple[int, int], text: str) -> str:
     payload = {
         "chunker": CHUNKER,
         "window": window,
-        "outputs": mode.value,
         "notebook": path,
         "start": span[0],
         "end": span[1],
@@ -84,12 +78,11 @@ def fixed_chunks(
     cells: Sequence[Cell],
     window: int,
     tokenizer: Tokenizer,
-    outputs: OutputMode = OutputMode.NONE,
 ) -> list[Chunk]:
     """Cut one notebook into consecutive `window`-token chunks (the last may be shorter)."""
     if window < 1:
         raise ValueError(f"window must be at least 1, got {window}")
-    stream, segments = _stream(cells, outputs, tokenizer)
+    stream, segments = _stream(cells)
     if not stream:
         return []
     starts = tokenizer.token_starts(stream)
@@ -104,7 +97,7 @@ def fixed_chunks(
         hashes = tuple(dict.fromkeys(raw_hashes[p.cell_index] for p in pieces))
         chunks.append(
             Chunk(
-                id=_window_id(notebook_path, window, outputs, (start, end), text),
+                id=_window_id(notebook_path, window, (start, end), text),
                 notebook_path=notebook_path,
                 heading_path=(),
                 pieces=tuple(pieces),

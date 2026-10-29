@@ -7,7 +7,7 @@ relies on. Blank lines between two paragraphs attach to the paragraph before the
 after a closing fence start the next block.
 
 Units: a top-level code statement (with its leading comments and decorators), a markdown
-fenced block (never split), a markdown paragraph, a sentence, an output line.
+fenced block (never split), a markdown paragraph, a sentence.
 """
 
 import ast
