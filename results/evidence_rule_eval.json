@@ -1,0 +1,17 @@
+{
+  "seed": 20261029,
+  "rule_fingerprint": "859eea67ec82000d69f0f060ec5a9bfbc89ede036548a1fa295ba883953676ed",
+  "population_kept": 434,
+  "population_dropped": 850,
+  "sampled_kept": 25,
+  "sampled_dropped": 25,
+  "labelled_evidence_in_kept": 11,
+  "labelled_evidence_in_dropped": 6,
+  "precision": 0.44,
+  "precision_wilson95": {
+    "low": 0.2666537494700256,
+    "high": 0.6293298298043557
+  },
+  "recall_weighted": 0.48349199918979135,
+  "evidence_prevalence_weighted": 0.30760124610591905
+}
