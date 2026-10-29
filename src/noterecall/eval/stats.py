@@ -7,9 +7,12 @@ mean. Everything is seeded, so a result file can be reproduced exactly.
 """
 
 from collections.abc import Mapping, Sequence
+from typing import Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict
+
+from noterecall.ingest.stats import GitState
 
 BOOTSTRAP_RESAMPLES = 10_000
 CONFIDENCE = 0.95
@@ -104,3 +107,69 @@ def adopt(ci: BootstrapCI, free: bool) -> Decision:
     if includes_zero:
         return Decision(adopt=False, reason="not free and the interval includes 0")
     return Decision(adopt=False, reason="the interval is entirely below 0")
+
+
+class SimulationSpec(BaseModel):
+    """One synthetic setting: n paired deltas ~ Normal(effect, sd), repeated `trials` times."""
+
+    model_config = ConfigDict(frozen=True)
+
+    effect: float
+    sd: float
+    n: int
+    trials: int
+    resamples: int
+
+
+class SimulationResult(BaseModel):
+    """How the bootstrap behaves on synthetic data with a known true effect."""
+
+    model_config = ConfigDict(frozen=True)
+
+    spec: SimulationSpec
+    excludes_zero_above: float
+    covers_true_effect: float
+
+
+def simulate_bootstrap(spec: SimulationSpec, seed: int) -> SimulationResult:
+    """Run the synthetic experiments in `spec`.
+
+    Reports the share of intervals whose lower bound is above 0 (power when effect > 0, the
+    one-sided false-positive rate when effect = 0) and the share that contain the true effect.
+    """
+    if spec.trials < 1:
+        raise EvalStatsError("trials must be at least 1")
+    above = covered = 0
+    for trial in range(spec.trials):
+        sample = np.random.default_rng([seed, trial]).normal(spec.effect, spec.sd, size=spec.n)
+        ci = paired_bootstrap(sample.tolist(), seed=trial, resamples=spec.resamples)
+        above += ci.low > 0
+        covered += ci.low <= spec.effect <= ci.high
+    return SimulationResult(
+        spec=spec,
+        excludes_zero_above=above / spec.trials,
+        covers_true_effect=covered / spec.trials,
+    )
+
+
+class BootstrapValidation(BaseModel):
+    """The contents of `results/bootstrap_validation.json`: synthetic data only."""
+
+    model_config = ConfigDict(frozen=True)
+
+    schema_version: Literal[1]
+    git: GitState
+    seed: int
+    simulations: tuple[SimulationResult, ...]
+
+
+def validate_bootstrap(
+    specs: Sequence[SimulationSpec], seed: int, git: GitState
+) -> BootstrapValidation:
+    """Simulate every setting; no private data is involved."""
+    return BootstrapValidation(
+        schema_version=1,
+        git=git,
+        seed=seed,
+        simulations=tuple(simulate_bootstrap(spec, seed) for spec in specs),
+    )

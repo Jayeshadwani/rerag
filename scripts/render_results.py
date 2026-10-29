@@ -1,6 +1,7 @@
 """Render a results JSON file as Markdown tables (CLAUDE.md: numbers come from results/).
 
-Renders `corpus_stats.json`, `chunk_stats.json` and `evidence_rule_eval.json`; later milestones
+Renders `corpus_stats.json`, `chunk_stats.json`, `evidence_rule_eval.json` and
+`bootstrap_validation.json`; later milestones
 add their result files.
 Every number printed is read from the file (or a ratio of two numbers in it); none is typed
 by hand. Usage: `python scripts/render_results.py results/corpus_stats.json`.
@@ -15,6 +16,7 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from noterecall.chunking.report import ChunkStats
+from noterecall.eval.stats import BootstrapValidation
 from noterecall.ingest.stats import CorpusStats, Distribution, GitState
 
 
@@ -173,12 +175,40 @@ def render_evidence_eval(result: EvidenceEval) -> str:
     return _table(("Evidence rule vs owner labels", "Value"), rows) + "\n\n" + note + "\n"
 
 
-def load_results(path: Path) -> CorpusStats | ChunkStats | EvidenceReport:
+def render_bootstrap_validation(result: BootstrapValidation) -> str:
+    """Markdown for the synthetic bootstrap check."""
+    rows = [
+        (
+            f"{sim.spec.effect:g}",
+            _n(sim.spec.n),
+            _n(sim.spec.trials),
+            _pct(sim.excludes_zero_above),
+            _pct(sim.covers_true_effect),
+        )
+        for sim in result.simulations
+    ]
+    header = (
+        "True mean delta",
+        "Queries",
+        "Experiments",
+        "Lower bound above 0",
+        "Interval contains the true mean",
+    )
+    note = (
+        f"Synthetic data only (sd {result.simulations[0].spec.sd:g}), seed {result.seed}, "
+        f"commit `{result.git.sha[:12]}`{' (dirty tree)' if result.git.dirty else ''}."
+    )
+    return _grid(header, rows) + "\n\n" + note + "\n"
+
+
+def load_results(path: Path) -> CorpusStats | ChunkStats | EvidenceReport | BootstrapValidation:
     """Read a results file and validate it as the report type its keys identify."""
     text = path.read_text(encoding="utf-8")
     keys = json.loads(text)
     if "rows" in keys:
         return ChunkStats.model_validate_json(text)
+    if "simulations" in keys:
+        return BootstrapValidation.model_validate_json(text)
     if "summary" in keys:
         return EvidenceReport.model_validate_json(text)
     return CorpusStats.model_validate_json(text)
@@ -196,6 +226,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     if isinstance(report, ChunkStats):
         sys.stdout.write(render_chunk_stats(report))
+    elif isinstance(report, BootstrapValidation):
+        sys.stdout.write(render_bootstrap_validation(report))
     elif isinstance(report, EvidenceReport):
         sys.stdout.write(render_evidence_eval(report.summary))
     else:

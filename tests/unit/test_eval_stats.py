@@ -6,10 +6,12 @@ import pytest
 from noterecall.eval.stats import (
     BootstrapCI,
     EvalStatsError,
+    SimulationSpec,
     adopt,
     paired_bootstrap,
     paired_deltas,
     permutation_pvalue,
+    simulate_bootstrap,
 )
 
 
@@ -45,29 +47,37 @@ def test_bootstrap_is_reproducible_and_seed_dependent() -> None:
     assert a != paired_bootstrap(values, seed=6, resamples=2000)
 
 
-def _trials(effect: float, trials: int) -> list[BootstrapCI]:
-    """`trials` synthetic experiments: 60 paired deltas ~ Normal(effect, 0.1), seeded."""
-    out: list[BootstrapCI] = []
-    for seed in range(trials):
-        sample = np.random.default_rng(1000 + seed).normal(effect, 0.1, size=60)
-        out.append(paired_bootstrap(sample.tolist(), seed=seed, resamples=1000))
-    return out
-
-
 def test_known_effect_is_detected_and_covered() -> None:
     # true mean +0.05, sd 0.1, n 60: standard error 0.0129, so about 3.9 standard errors from 0
     # and the interval should exclude 0 almost always (power about 97%)
-    cis = _trials(0.05, 300)
-    power = sum(ci.low > 0 for ci in cis) / len(cis)
-    coverage = sum(ci.low <= 0.05 <= ci.high for ci in cis) / len(cis)
-    assert power >= 0.90
-    assert 0.90 <= coverage <= 1.0  # nominal 95%
+    sim = simulate_bootstrap(
+        SimulationSpec(effect=0.05, sd=0.1, n=60, trials=300, resamples=1000), seed=11
+    )
+    assert sim.excludes_zero_above >= 0.90
+    assert 0.90 <= sim.covers_true_effect <= 1.0  # nominal 95%
 
 
 def test_no_effect_is_rarely_called_an_improvement() -> None:
-    cis = _trials(0.0, 300)
-    false_positive = sum(ci.low > 0 for ci in cis) / len(cis)
-    assert false_positive <= 0.08  # one-sided nominal 2.5%
+    sim = simulate_bootstrap(
+        SimulationSpec(effect=0.0, sd=0.1, n=60, trials=300, resamples=1000), seed=12
+    )
+    assert sim.excludes_zero_above <= 0.08  # one-sided nominal 2.5%
+
+
+def test_simulation_is_reproducible_and_validates_trials() -> None:
+    spec = SimulationSpec(effect=0.05, sd=0.1, n=30, trials=20, resamples=200)
+    a = simulate_bootstrap(spec, seed=3)
+    assert a == simulate_bootstrap(spec, seed=3)
+    assert a.spec == spec
+    with pytest.raises(EvalStatsError, match="trials"):
+        simulate_bootstrap(SimulationSpec(effect=0.0, sd=0.1, n=30, trials=0, resamples=10), seed=1)
+
+
+def test_simulation_with_a_huge_effect_always_excludes_zero() -> None:
+    sim = simulate_bootstrap(
+        SimulationSpec(effect=5.0, sd=0.1, n=10, trials=10, resamples=100), seed=1
+    )
+    assert sim.excludes_zero_above == 1.0
 
 
 def test_empty_or_invalid_inputs_fail() -> None:
