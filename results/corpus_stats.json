@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "git": {
+    "sha": "c1854fae5b71992cbbf1e24b2848fb5934ea9ce4",
+    "dirty": false
+  },
+  "config": {
+    "paths": {
+      "raw_dir": "data/rerag-data/notebooks",
+      "db_path": "data/noterecall.sqlite",
+      "results_dir": "results"
+    },
+    "logging": {
+      "level": "INFO"
+    },
+    "cleaning": {
+      "rules_path": "config/cleaning_rules.yaml",
+      "max_output_lines": 20
+    },
+    "tokenizer": {
+      "encoding": "cl100k_base"
+    }
+  },
+  "rules_sha256": "8e521269555c59d939885620364e6b580f0591749bccd2a51ac21acc4d4afe0d",
+  "pipeline_hash": "e27c7bf55596a013da6e830513bc939a0a8259e599f0cd8d1afcd97916660f85",
+  "notebooks": 53,
+  "cells_raw": 6432,
+  "cells_kept": {
+    "markdown": 3983,
+    "code": 2078
+  },
+  "tokens": {
+    "tokenizer": "cl100k_base",
+    "tiktoken_version": "0.14.0",
+    "raw": 66810866,
+    "clean": 662638
+  },
+  "removed_by_rule": {
+    "cells_dropped_empty": 68,
+    "instructor_notes": 58,
+    "instructor_note_lines_removed": 176,
+    "instructor_note_cells_dropped": 24,
+    "inline_data_uri_removed": 306,
+    "inline_data_uri_chars_removed": 91861632,
+    "image_only_cells_dropped": 279,
+    "output_image_dropped": 324,
+    "output_html_dropped": 0,
+    "output_other_dropped": 1,
+    "output_error_dropped": 20,
+    "output_html_representation_dropped": 372,
+    "outputs_truncated": 203,
+    "output_lines_truncated": 34274
+  },
+  "secrets_scrubbed_by_type": {},
+  "duplicate_extra_copies": {
+    "within_notebook": 110,
+    "across_notebooks": 68
+  },
+  "cells_per_notebook": {
+    "min": 19,
+    "median": 96.0,
+    "max": 322
+  },
+  "clean_tokens_per_notebook": {
+    "min": 5399,
+    "median": 11951.0,
+    "max": 27223
+  }
+}
