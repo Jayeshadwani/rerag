@@ -12,17 +12,20 @@ from pathlib import Path
 from typing import Annotated
 
 import structlog
+import tiktoken
 import typer
 
 from noterecall.chunking.evidence import judge_output, rule_fingerprint
 from noterecall.chunking.evidence_check import (
     EvidenceCheckError,
+    EvidenceReport,
     OutputRef,
     draw_sample,
     evaluate,
     read_labels,
     read_manifest,
     render_sample,
+    score_items,
     write_manifest,
 )
 from noterecall.chunking.report import compute_chunk_stats
@@ -246,10 +249,33 @@ def _evidence_eval(settings: Settings, labels: Path | None, out: Path | None) ->
         raise EvidenceCheckError(
             "the evidence rule changed after this sample was drawn; its labels no longer apply"
         )
-    result = evaluate(manifest, read_labels(labels or directory / "labels.json", manifest))
+    scored = read_labels(labels or directory / "labels.json", manifest)
+    tokenizer = load_tokenizer(settings.tokenizer.encoding)
+    conn = connect(settings.paths.db_path)
+    try:
+        texts = {
+            (path, cell.index): cell.output_text
+            for path, cells in notebook_cells(conn)
+            for cell in cells
+        }
+    finally:
+        conn.close()
+    verdicts = {
+        i.sample_id: judge_output(texts[(i.notebook_path, i.cell_index)], tokenizer)
+        for i in manifest.items
+    }
+    report = EvidenceReport(
+        schema_version=2,
+        git=git_state(),
+        config=settings.model_dump(mode="json"),
+        tokenizer=settings.tokenizer.encoding,
+        tiktoken_version=tiktoken.__version__,
+        summary=evaluate(manifest, scored),
+        items=score_items(manifest, scored, verdicts),
+    )
     target = out if out is not None else settings.paths.results_dir / "evidence_rule_eval.json"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    target.write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
     return f"evidence-eval: wrote {target}"
 
 

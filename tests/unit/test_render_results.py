@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from noterecall.chunking.evidence_check import EvidenceEval, Interval
+from noterecall.chunking.evidence_check import EvidenceEval, EvidenceReport, Interval
 from noterecall.chunking.report import ChunkRow, ChunkSizes, ChunkStats
 from noterecall.ingest.stats import (
     CorpusStats,
@@ -152,7 +152,16 @@ def test_main_dispatches_on_the_kind_of_results_file(
     chunks = tmp_path / "chunks.json"
     chunks.write_text(_chunk_stats().model_dump_json(), encoding="utf-8")
     evaluation = tmp_path / "eval.json"
-    evaluation.write_text(_evaluation().model_dump_json(), encoding="utf-8")
+    report = EvidenceReport(
+        schema_version=2,
+        git=GitState(sha="a" * 40, dirty=False),
+        config={},
+        tokenizer="cl100k_base",
+        tiktoken_version="0",
+        summary=_evaluation(),
+        items=(),
+    )
+    evaluation.write_text(report.model_dump_json(), encoding="utf-8")
     assert main([str(chunks)]) == 0
     assert "Flagged oversize" in capsys.readouterr().out
     assert main([str(evaluation)]) == 0

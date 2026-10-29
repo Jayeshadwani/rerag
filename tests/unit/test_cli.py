@@ -12,7 +12,7 @@ from typer.testing import CliRunner
 from make_fixtures import FIXTURE_DIR
 from noterecall import cli
 from noterecall.chunking.evidence import rule_fingerprint
-from noterecall.chunking.evidence_check import EvidenceEval, read_manifest
+from noterecall.chunking.evidence_check import EvidenceReport, read_manifest
 from noterecall.chunking.report import ChunkStats
 from noterecall.chunking.tokens import Tokenizer, TokenizerError
 from noterecall.ingest.stats import CorpusStats
@@ -214,8 +214,12 @@ def test_evidence_eval_reports_against_the_labels(config: Path, tmp_path: Path) 
     result = runner.invoke(cli.app, ["evidence-eval", "--config", str(config)])
     assert result.exit_code == 0, result.stderr
     target = tmp_path / "results" / "evidence_rule_eval.json"
-    evaluation = EvidenceEval.model_validate_json(target.read_text(encoding="utf-8"))
-    assert (evaluation.precision, evaluation.recall_weighted) == (1.0, 1.0)
+    report = EvidenceReport.model_validate_json(target.read_text(encoding="utf-8"))
+    assert (report.summary.precision, report.summary.recall_weighted) == (1.0, 1.0)
+    assert len(report.items) == 4
+    assert all(i.labelled_evidence == (i.stratum == "kept") for i in report.items)
+    assert len(report.git.sha) == 40
+    assert report.config["tokenizer"]["encoding"] == report.tokenizer
     text = target.read_text(encoding="utf-8")
     assert "ipynb" not in text  # no paths in the results file
 

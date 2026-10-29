@@ -16,6 +16,7 @@ from noterecall.chunking.evidence_check import (
     read_labels,
     read_manifest,
     render_sample,
+    score_items,
     wilson_interval,
     write_manifest,
 )
@@ -183,3 +184,25 @@ def test_render_sample_shows_ids_and_sizes_but_not_paths_or_verdicts() -> None:
     assert "secret" not in text
     assert "True" not in text
     assert "False" not in text
+
+
+def test_score_items_keeps_sample_order_and_never_carries_text() -> None:
+    manifest = SampleManifest(
+        seed=1,
+        rule_fingerprint="f" * 64,
+        population_kept=2,
+        population_dropped=2,
+        items=(
+            SampleItem(sample_id=1, notebook_path="a.ipynb", cell_index=3, rule_keeps=False),
+            SampleItem(sample_id=2, notebook_path="b.ipynb", cell_index=0, rule_keeps=True),
+        ),
+    )
+    verdicts = {1: EvidenceVerdict.TABLE, 2: EvidenceVerdict.EVIDENCE}
+    scores = score_items(manifest, {1: True, 2: False}, verdicts)
+    assert [(s.sample_id, s.stratum, s.rule_verdict, s.labelled_evidence) for s in scores] == [
+        (1, "dropped", EvidenceVerdict.TABLE, True),
+        (2, "kept", EvidenceVerdict.EVIDENCE, False),
+    ]
+    assert "ipynb" not in scores[0].model_dump_json()
+    with pytest.raises(EvidenceCheckError, match="no rule verdict for sample ids \\[2\\]"):
+        score_items(manifest, {1: True, 2: False}, {1: EvidenceVerdict.TABLE})

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from noterecall.chunking.evidence_check import EvidenceEval
+from noterecall.chunking.evidence_check import EvidenceEval, EvidenceReport
 from noterecall.chunking.report import ChunkStats
 from noterecall.ingest.stats import CorpusStats, Distribution
 
@@ -148,14 +148,14 @@ def render_evidence_eval(result: EvidenceEval) -> str:
     return _table(("Evidence rule vs owner labels", "Value"), rows) + "\n\n" + note + "\n"
 
 
-def load_results(path: Path) -> CorpusStats | ChunkStats | EvidenceEval:
+def load_results(path: Path) -> CorpusStats | ChunkStats | EvidenceReport:
     """Read a results file and validate it as the report type its keys identify."""
     text = path.read_text(encoding="utf-8")
     keys = json.loads(text)
     if "rows" in keys:
         return ChunkStats.model_validate_json(text)
-    if "labelled_evidence_in_kept" in keys:
-        return EvidenceEval.model_validate_json(text)
+    if "summary" in keys:
+        return EvidenceReport.model_validate_json(text)
     return CorpusStats.model_validate_json(text)
 
 
@@ -171,8 +171,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     if isinstance(report, ChunkStats):
         sys.stdout.write(render_chunk_stats(report))
-    elif isinstance(report, EvidenceEval):
-        sys.stdout.write(render_evidence_eval(report))
+    elif isinstance(report, EvidenceReport):
+        sys.stdout.write(render_evidence_eval(report.summary))
     else:
         sys.stdout.write(render_corpus_stats(report))
     return 0

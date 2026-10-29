@@ -12,11 +12,12 @@ import math
 import random
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from noterecall.chunking.evidence import EvidenceVerdict
+from noterecall.ingest.stats import GitState
 
 
 class EvidenceCheckError(Exception):
@@ -87,6 +88,49 @@ class EvidenceEval(BaseModel):
     precision_wilson95: Interval | None
     recall_weighted: float | None
     evidence_prevalence_weighted: float | None
+
+
+class ItemScore(BaseModel):
+    """One sampled output's score: ids and verdicts only, never text or paths."""
+
+    model_config = ConfigDict(frozen=True)
+
+    sample_id: int
+    stratum: Literal["kept", "dropped"]
+    rule_verdict: EvidenceVerdict
+    labelled_evidence: bool
+
+
+class EvidenceReport(BaseModel):
+    """The contents of `results/evidence_rule_eval.json` (CLAUDE.md section 4 metadata)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    schema_version: Literal[2]
+    git: GitState
+    config: dict[str, Any]
+    tokenizer: str
+    tiktoken_version: str
+    summary: EvidenceEval
+    items: tuple[ItemScore, ...]
+
+
+def score_items(
+    manifest: SampleManifest, labels: dict[int, bool], verdicts: dict[int, EvidenceVerdict]
+) -> tuple[ItemScore, ...]:
+    """Per-item scores in sample order. A verdict must exist for every sampled item."""
+    missing = sorted({i.sample_id for i in manifest.items} - set(verdicts))
+    if missing:
+        raise EvidenceCheckError(f"no rule verdict for sample ids {missing}")
+    return tuple(
+        ItemScore(
+            sample_id=item.sample_id,
+            stratum="kept" if item.rule_keeps else "dropped",
+            rule_verdict=verdicts[item.sample_id],
+            labelled_evidence=labels[item.sample_id],
+        )
+        for item in manifest.items
+    )
 
 
 def wilson_interval(successes: int, n: int, z: float = 1.96) -> Interval:
