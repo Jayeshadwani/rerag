@@ -1,0 +1,314 @@
+{
+  "schema_version": 1,
+  "git": {
+    "sha": "6f1ff49e62524e01d3354556acd9e50977daf61d",
+    "dirty": false
+  },
+  "config": {
+    "paths": {
+      "raw_dir": "data/rerag-data/notebooks",
+      "db_path": "data/noterecall.sqlite",
+      "results_dir": "results"
+    },
+    "logging": {
+      "level": "INFO"
+    },
+    "cleaning": {
+      "rules_path": "config/cleaning_rules.yaml",
+      "max_output_lines": 20
+    },
+    "tokenizer": {
+      "encoding": "cl100k_base"
+    },
+    "chunking": {
+      "candidate_caps": [
+        256,
+        512,
+        1024
+      ]
+    }
+  },
+  "pipeline_hash": "e27c7bf55596a013da6e830513bc939a0a8259e599f0cd8d1afcd97916660f85",
+  "tokenizer": "cl100k_base",
+  "tiktoken_version": "0.14.0",
+  "evidence_rule_fingerprint": "859eea67ec82000d69f0f060ec5a9bfbc89ede036548a1fa295ba883953676ed",
+  "notebooks": 53,
+  "cells": 6061,
+  "outputs_by_verdict": {
+    "evidence": 434,
+    "empty": 0,
+    "truncated": 202,
+    "too_long": 468,
+    "progress": 17,
+    "warning": 7,
+    "object_repr": 54,
+    "array": 40,
+    "table": 62
+  },
+  "rows": [
+    {
+      "chunker": "structural",
+      "cap": 256,
+      "outputs": "none",
+      "chunks": 3107,
+      "tokens": {
+        "min": 2,
+        "median": 153.0,
+        "p90": 248,
+        "max": 1554
+      },
+      "under_quarter_cap": 598,
+      "flagged_by_reason": {
+        "statement": 38,
+        "sentence": 15,
+        "fenced_block": 4,
+        "output_line": 0,
+        "unparsed_code": 2
+      },
+      "cells_split": 297,
+      "unparsed_code_cells": 2
+    },
+    {
+      "chunker": "structural",
+      "cap": 256,
+      "outputs": "all",
+      "chunks": 3903,
+      "tokens": {
+        "min": 1,
+        "median": 185.0,
+        "p90": 250,
+        "max": 1577
+      },
+      "under_quarter_cap": 569,
+      "flagged_by_reason": {
+        "statement": 38,
+        "sentence": 15,
+        "fenced_block": 4,
+        "output_line": 13,
+        "unparsed_code": 2
+      },
+      "cells_split": 810,
+      "unparsed_code_cells": 2
+    },
+    {
+      "chunker": "structural",
+      "cap": 256,
+      "outputs": "evidence",
+      "chunks": 3131,
+      "tokens": {
+        "min": 2,
+        "median": 155.0,
+        "p90": 248,
+        "max": 1554
+      },
+      "under_quarter_cap": 594,
+      "flagged_by_reason": {
+        "statement": 38,
+        "sentence": 15,
+        "fenced_block": 4,
+        "output_line": 0,
+        "unparsed_code": 2
+      },
+      "cells_split": 327,
+      "unparsed_code_cells": 2
+    },
+    {
+      "chunker": "structural",
+      "cap": 512,
+      "outputs": "none",
+      "chunks": 2310,
+      "tokens": {
+        "min": 2,
+        "median": 155.0,
+        "p90": 467,
+        "max": 1554
+      },
+      "under_quarter_cap": 964,
+      "flagged_by_reason": {
+        "statement": 11,
+        "sentence": 5,
+        "fenced_block": 0,
+        "output_line": 0,
+        "unparsed_code": 1
+      },
+      "cells_split": 80,
+      "unparsed_code_cells": 1
+    },
+    {
+      "chunker": "structural",
+      "cap": 512,
+      "outputs": "all",
+      "chunks": 2675,
+      "tokens": {
+        "min": 1,
+        "median": 210.0,
+        "p90": 491,
+        "max": 1577
+      },
+      "under_quarter_cap": 896,
+      "flagged_by_reason": {
+        "statement": 11,
+        "sentence": 5,
+        "fenced_block": 0,
+        "output_line": 10,
+        "unparsed_code": 1
+      },
+      "cells_split": 385,
+      "unparsed_code_cells": 1
+    },
+    {
+      "chunker": "structural",
+      "cap": 512,
+      "outputs": "evidence",
+      "chunks": 2317,
+      "tokens": {
+        "min": 2,
+        "median": 158.0,
+        "p90": 472,
+        "max": 1554
+      },
+      "under_quarter_cap": 953,
+      "flagged_by_reason": {
+        "statement": 11,
+        "sentence": 5,
+        "fenced_block": 0,
+        "output_line": 0,
+        "unparsed_code": 1
+      },
+      "cells_split": 85,
+      "unparsed_code_cells": 1
+    },
+    {
+      "chunker": "structural",
+      "cap": 1024,
+      "outputs": "none",
+      "chunks": 2045,
+      "tokens": {
+        "min": 2,
+        "median": 145.0,
+        "p90": 578,
+        "max": 1554
+      },
+      "under_quarter_cap": 1423,
+      "flagged_by_reason": {
+        "statement": 1,
+        "sentence": 2,
+        "fenced_block": 0,
+        "output_line": 0,
+        "unparsed_code": 0
+      },
+      "cells_split": 15,
+      "unparsed_code_cells": 0
+    },
+    {
+      "chunker": "structural",
+      "cap": 1024,
+      "outputs": "all",
+      "chunks": 2176,
+      "tokens": {
+        "min": 1,
+        "median": 184.0,
+        "p90": 826,
+        "max": 1577
+      },
+      "under_quarter_cap": 1298,
+      "flagged_by_reason": {
+        "statement": 1,
+        "sentence": 2,
+        "fenced_block": 0,
+        "output_line": 5,
+        "unparsed_code": 0
+      },
+      "cells_split": 125,
+      "unparsed_code_cells": 0
+    },
+    {
+      "chunker": "structural",
+      "cap": 1024,
+      "outputs": "evidence",
+      "chunks": 2047,
+      "tokens": {
+        "min": 2,
+        "median": 148.0,
+        "p90": 581,
+        "max": 1554
+      },
+      "under_quarter_cap": 1412,
+      "flagged_by_reason": {
+        "statement": 1,
+        "sentence": 2,
+        "fenced_block": 0,
+        "output_line": 0,
+        "unparsed_code": 0
+      },
+      "cells_split": 17,
+      "unparsed_code_cells": 0
+    },
+    {
+      "chunker": "fixed",
+      "cap": 256,
+      "outputs": "none",
+      "chunks": 1871,
+      "tokens": {
+        "min": 1,
+        "median": 256.0,
+        "p90": 256,
+        "max": 258
+      },
+      "under_quarter_cap": 12,
+      "flagged_by_reason": {
+        "statement": 0,
+        "sentence": 0,
+        "fenced_block": 0,
+        "output_line": 0,
+        "unparsed_code": 0
+      },
+      "cells_split": 1489,
+      "unparsed_code_cells": 0
+    },
+    {
+      "chunker": "fixed",
+      "cap": 512,
+      "outputs": "none",
+      "chunks": 950,
+      "tokens": {
+        "min": 1,
+        "median": 512.0,
+        "p90": 512,
+        "max": 513
+      },
+      "under_quarter_cap": 19,
+      "flagged_by_reason": {
+        "statement": 0,
+        "sentence": 0,
+        "fenced_block": 0,
+        "output_line": 0,
+        "unparsed_code": 0
+      },
+      "cells_split": 823,
+      "unparsed_code_cells": 0
+    },
+    {
+      "chunker": "fixed",
+      "cap": 1024,
+      "outputs": "none",
+      "chunks": 487,
+      "tokens": {
+        "min": 9,
+        "median": 1024.0,
+        "p90": 1024,
+        "max": 1025
+      },
+      "under_quarter_cap": 15,
+      "flagged_by_reason": {
+        "statement": 0,
+        "sentence": 0,
+        "fenced_block": 0,
+        "output_line": 0,
+        "unparsed_code": 0
+      },
+      "cells_split": 419,
+      "unparsed_code_cells": 0
+    }
+  ]
+}
