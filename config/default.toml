@@ -32,7 +32,6 @@ sensitivity_budgets = [1536, 6144]
 rrf_default = 60
 rrf_challengers = [10, 30]
 latency_budget_ms = 1000.0
-# [retrieval.decided] is added only by a commit that cites results/retrieval_ablation_dev.json.
 
 # Candidate embedding models, smallest first. Revisions are the commits of the model repos on
 # Hugging Face when they were checked (2026-11-02). Prefixes are the ones each model card documents.
@@ -57,3 +56,12 @@ passage_prefix = "passage: "
 [rerank.model]
 id = "cross-encoder/ms-marco-MiniLM-L6-v2"
 revision = "233902d25c440f23af6f7d6e94d2946bac0bee0a"
+
+# Data-decided by the M4 dev ablation (results/retrieval_ablation_dev.json, commit de4733a).
+# Dense only: the hybrid and the reranker did not pass their ADR-010 / ADR-006 rules.
+[retrieval.decided]
+chunk_cap = 512
+
+[retrieval.decided.pipeline]
+dense_model = "BAAI/bge-base-en-v1.5"
+rerank = false

@@ -283,8 +283,11 @@ def test_results_render_to_markdown_and_dispatch_by_file_kind(
     text = render_dev(dev)
     assert "| Stage | Comparison | Metric | Mean delta | 95% CI | Free | Decision |" in text
     assert "| Configuration | Recall@5 | Recall@10 | MRR@10 | nDCG@10 | Recall@tokens=100 |" in text
-    assert "| structural-64 | bm25-code | 1.000 | 1.000 |" in text  # a configuration row
+    assert (
+        "| structural-64 \\| bm25-code | 1.000 | 1.000 |" in text
+    )  # a row; the | in the name is escaped
     assert "skipped: the hybrid was not adopted" in text
+    assert "| Recall@10 by query type | code_identifier (n=" in text
     assert "Decided: chunk cap 64, lexical code, dense None, RRF k None, rerank False." in text
     assert f"{dev.meta.queries} dev queries" in text
     decided = settings.retrieval.model_copy(update={"decided": dev.decided})

@@ -10,9 +10,14 @@ from noterecall.eval.ablation import Comparison, ConfigResult
 from noterecall.eval.run_retrieval import DevResults, TestResults
 
 
+def _cell(text: str) -> str:
+    """A table cell: configuration names contain `|`, which would split the column."""
+    return text.replace("|", "\\|")
+
+
 def _grid(header: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     lines = ["| " + " | ".join(header) + " |", "|" + "|".join("---" for _ in header) + "|"]
-    lines.extend("| " + " | ".join(row) + " |" for row in rows)
+    lines.extend("| " + " | ".join(_cell(c) for c in row) + " |" for row in rows)
     return "\n".join(lines)
 
 
@@ -81,6 +86,34 @@ def decision_table(comparisons: Sequence[Comparison]) -> str:
     return _grid(header, comparison_rows(comparisons))
 
 
+def by_type_table(result: DevResults, names: Sequence[str]) -> str:
+    """Mean Recall@10 per query type for the named configurations (descriptive, no decision)."""
+    types = sorted(set(result.meta.query_types.values()))
+    counts = {t: sum(1 for v in result.meta.query_types.values() if v == t) for t in types}
+    by_name = {c.name: c for c in result.ablation.configs}
+    rows = []
+    for name in names:
+        config = by_name[name]
+        cells = []
+        for qtype in types:
+            ids = [q for q, t in result.meta.query_types.items() if t == qtype]
+            cells.append(_f(sum(config.per_query[q]["recall@10"] for q in ids) / len(ids)))
+        rows.append([name, *cells])
+    header = ["Recall@10 by query type", *(f"{t} (n={counts[t]})" for t in types)]
+    return _grid(header, rows)
+
+
+def _type_table_names(result: DevResults) -> list[str]:
+    """The decided cap's BM25 baseline, single retrievers, hybrid and reranked configurations."""
+    cap = result.decided.chunk_cap
+    wanted = [
+        c.name
+        for c in result.ablation.configs
+        if c.key.cap == cap and c.key.chunker == "structural"
+    ]
+    return [n for n in wanted if "bm25-code" in n or "dense" in n]
+
+
 def render_dev(result: DevResults) -> str:
     """The full dev report: decisions, every configuration, truncation, sensitivity."""
     comparisons = [c for s in result.ablation.stages for c in s.comparisons]
@@ -107,6 +140,8 @@ def render_dev(result: DevResults) -> str:
                 *notes,
                 decided,
                 config_table(result.ablation.configs, budget),
+                "Recall@10 by query type (report only, no decision):",
+                by_type_table(result, _type_table_names(result)),
                 "Decided pipeline at each chunk cap (report only, no decision):",
                 config_table(result.sensitivity, budget),
                 truncation,
