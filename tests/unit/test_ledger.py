@@ -9,7 +9,6 @@ from noterecall.eval.ledger import (
     LedgerEntry,
     LedgerError,
     check_test_allowed,
-    file_sha256,
     read_ledger,
     record_run,
 )
@@ -60,9 +59,3 @@ def test_unreadable_ledger_and_unwritable_path_fail_loudly(tmp_path: Path) -> No
     blocker.write_text("x")
     with pytest.raises(LedgerError, match="cannot write the test ledger"):
         record_run(blocker / "ledger.json", entry())
-
-
-def test_file_sha256(tmp_path: Path) -> None:
-    path = tmp_path / "f.txt"
-    path.write_bytes(b"abc")
-    assert file_sha256(path) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"

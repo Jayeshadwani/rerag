@@ -5,7 +5,6 @@ and the sha256 of the results file. A second test run for the same milestone is 
 is a run from a dirty tree or against a gold set that is not frozen.
 """
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -54,11 +53,6 @@ def check_test_allowed(ledger: Ledger, milestone: str, git_dirty: bool, gold_fro
         raise LedgerError("the working tree has uncommitted changes; commit before the test run")
     if not gold_frozen:
         raise LedgerError("the gold set is not frozen; run `noterecall gold freeze` first")
-
-
-def file_sha256(path: Path) -> str:
-    """sha256 of a file's bytes."""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def record_run(path: Path, entry: LedgerEntry) -> None:

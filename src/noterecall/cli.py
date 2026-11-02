@@ -6,6 +6,7 @@ ADR-015). `noterecall stats` writes the aggregate corpus report to
 unexpected errors are not caught.
 """
 
+import importlib.metadata
 import sqlite3
 import sys
 from pathlib import Path
@@ -24,6 +25,7 @@ from noterecall.eval.gold import (
     GoldSet,
     Issue,
     QueryType,
+    Split,
     freeze_gold,
     load_gold,
     next_query_id,
@@ -33,6 +35,23 @@ from noterecall.eval.gold import (
     validate_gold,
 )
 from noterecall.eval.labeling import Entry, QuerySession, build_entries
+from noterecall.eval.ledger import (
+    LedgerEntry,
+    LedgerError,
+    check_test_allowed,
+    read_ledger,
+    record_run,
+)
+from noterecall.eval.run_retrieval import (
+    DevResults,
+    Resources,
+    RunContext,
+    RunError,
+    run_dev,
+    run_test,
+)
+from noterecall.index.embeddings import EmbeddingService
+from noterecall.index.st_models import load_cross_encoder, load_embedder
 from noterecall.index.store import StoreError, connect, notebook_cells
 from noterecall.ingest.clean import RulesError, load_rules
 from noterecall.ingest.ipynb import IpynbLoader, NotebookParseError
@@ -52,10 +71,13 @@ from noterecall.ingest.sync import (
 from noterecall.ingest.sync import (
     sync as run_sync,
 )
+from noterecall.retrieval.pipeline import Depths
 
 KNOWN_ERRORS = (
     ConfigError,
     GoldError,
+    LedgerError,
+    RunError,
     NotebookParseError,
     RulesError,
     StatsError,
@@ -387,5 +409,127 @@ def label(
     try:
         settings = _settings(config)
         _label(settings, _gold_path(settings, gold_path), edit)
+    except KNOWN_ERRORS as exc:
+        raise _fail(exc) from exc
+
+
+LIBRARIES = ("numpy", "bm25s", "tiktoken", "torch", "sentence-transformers", "transformers")
+
+
+def _versions() -> dict[str, str]:
+    return {name: importlib.metadata.version(name) for name in LIBRARIES}
+
+
+def _resources(
+    settings: Settings, conn: sqlite3.Connection, models: set[str] | None = None
+) -> Resources:
+    """Corpus, embedding services (cached in the database) and the reranker, all pinned."""
+    notebooks = list(notebook_cells(conn))
+    if not notebooks:
+        raise RunError("the database has no notebooks; run `noterecall sync` first")
+    services = {
+        spec.id: EmbeddingService(load_embedder(spec), spec, conn)
+        for spec in settings.embeddings.candidates
+        if models is None or spec.id in models
+    }
+    depths = Depths(
+        candidate=settings.retrieval.candidate_depth, fused=settings.retrieval.fused_depth
+    )
+    reranker = load_cross_encoder(settings.rerank.model)
+    return Resources(
+        notebooks, load_tokenizer(settings.tokenizer.encoding), services, reranker, depths
+    )
+
+
+def _write_json(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text + "\n", encoding="utf-8")
+
+
+def _eval_dev(settings: Settings, out: Path | None) -> str:
+    gold = load_gold(settings.paths.gold_path)
+    conn = connect(settings.paths.db_path)
+    try:
+        results = run_dev(
+            settings,
+            gold,
+            _resources(settings, conn),
+            RunContext(git=git_state(), versions=_versions()),
+        )
+    finally:
+        conn.close()
+    target = out if out is not None else settings.paths.results_dir / "retrieval_ablation_dev.json"
+    _write_json(target, results.model_dump_json(indent=2))
+    return f"eval: wrote {target}"
+
+
+def _check_matches_dev(settings: Settings) -> None:
+    """The committed decisions must be the ones the dev results file reached."""
+    decided = settings.retrieval.decided
+    if decided is None:
+        raise RunError("config has no [retrieval.decided]; commit the dev decisions first")
+    path = settings.paths.results_dir / "retrieval_ablation_dev.json"
+    try:
+        dev = DevResults.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RunError(f"cannot read the dev results at {path}: {exc}") from exc
+    if dev.decided != decided:
+        raise RunError("[retrieval.decided] differs from the decisions in the dev results file")
+
+
+def _eval_test(settings: Settings, milestone: str, out: Path | None) -> str:
+    gold = load_gold(settings.paths.gold_path)
+    git = git_state()
+    ledger_path = settings.paths.results_dir / "test_ledger.json"
+    check_test_allowed(read_ledger(ledger_path), milestone, git.dirty, gold.frozen)
+    _check_matches_dev(settings)
+    decided = settings.retrieval.decided
+    models = {decided.pipeline.dense_model} if decided and decided.pipeline.dense_model else set()
+    conn = connect(settings.paths.db_path)
+    try:
+        resources = _resources(settings, conn, models)
+        results = run_test(
+            settings, gold, resources, RunContext(git=git, versions=_versions()), milestone
+        )
+    finally:
+        conn.close()
+    target = (
+        out if out is not None else settings.paths.results_dir / f"retrieval_test_{milestone}.json"
+    )
+    _write_json(target, results.model_dump_json(indent=2))
+    record_run(
+        ledger_path,
+        LedgerEntry(
+            milestone=milestone,
+            git_sha=git.sha,
+            results_file=target.name,
+            results_sha256=file_sha256(target),
+        ),
+    )
+    return f"eval: wrote {target} and recorded the test run for {milestone}"
+
+
+@app.command("eval")
+def eval_command(
+    config: ConfigOption = None,
+    split: Annotated[
+        Split, typer.Option("--split", help="dev runs the ablation; test runs once.")
+    ] = Split.DEV,
+    milestone: Annotated[
+        str | None, typer.Option("--milestone", help="Required for --split test.")
+    ] = None,
+    out: Annotated[Path | None, typer.Option("--out", help="Output JSON path.")] = None,
+) -> None:
+    """Run the retrieval ablation on dev, or the decided pipeline once on test."""
+    try:
+        settings = _settings(config)
+        if split is Split.DEV:
+            typer.echo(_eval_dev(settings, out))
+        else:
+            if milestone is None:
+                raise RunError(
+                    "--split test needs --milestone (the test split runs once per milestone)"
+                )
+            typer.echo(_eval_test(settings, milestone, out))
     except KNOWN_ERRORS as exc:
         raise _fail(exc) from exc

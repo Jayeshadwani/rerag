@@ -13,6 +13,7 @@ import platform
 from collections.abc import Mapping, Sequence
 from typing import Literal, NamedTuple
 
+import structlog
 from pydantic import BaseModel, ConfigDict
 
 from noterecall.chunking.fixed import fixed_chunks
@@ -44,6 +45,8 @@ from noterecall.models import Cell, Chunk
 from noterecall.retrieval.dense import DenseIndex
 from noterecall.retrieval.pipeline import Components, Depths, PipelineSpec, RetrievalPipeline
 from noterecall.retrieval.rerank import Reranker
+
+log = structlog.get_logger()
 
 SEED = 20261029
 KS = (5, 10)
@@ -173,6 +176,7 @@ def make_evaluator(
             )
         metrics = next(iter(per_query.values())).keys()
         means = {m: sum(s[m] for s in per_query.values()) / len(per_query) for m in metrics}
+        log.info("eval.config", name=describe(key), recall_at_10=round(means["recall@10"], 4))
         return ConfigResult(
             name=describe(key),
             key=key,

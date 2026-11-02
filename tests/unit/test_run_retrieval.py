@@ -18,12 +18,16 @@ from noterecall.eval.gold import (
     QueryType,
     Split,
     freeze_gold,
+    save_gold,
 )
+from noterecall.eval.ledger import read_ledger
 from noterecall.eval.run_retrieval import (
     SEED,
+    DevResults,
     Resources,
     RunContext,
     RunError,
+    TestResults,
     ablation_params,
     build_chunks,
     run_dev,
@@ -31,9 +35,10 @@ from noterecall.eval.run_retrieval import (
     score_params,
     select_queries,
 )
-from noterecall.index.embeddings import EmbeddingService, HashEmbedder
+from noterecall.index.embeddings import EmbeddingService, EmbeddingSpec, HashEmbedder
 from noterecall.index.store import connect, notebook_cells
 from noterecall.ingest.stats import GitState
+from noterecall.ingest.sync import file_sha256
 from noterecall.models import Cell
 from noterecall.retrieval.pipeline import Depths, PipelineSpec
 from noterecall.retrieval.rerank import OverlapReranker
@@ -304,3 +309,171 @@ def test_an_unknown_embedding_model_is_a_loud_error(
         resources.pipeline(
             RunKey(cap=64, chunker="structural", spec=PipelineSpec(dense_model="missing"))
         )
+
+
+@pytest.fixture
+def fake_models(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace the real model loaders; returns the ids of the embedding models that were loaded."""
+    loaded: list[str] = []
+
+    def embedder(spec: EmbeddingSpec) -> HashEmbedder:
+        loaded.append(spec.id)
+        return HashEmbedder()
+
+    monkeypatch.setattr(cli, "load_embedder", embedder)
+    monkeypatch.setattr(cli, "load_cross_encoder", lambda _spec: OverlapReranker())
+    return loaded
+
+
+def _eval(config: Path, *args: str):  # type: ignore[no-untyped-def]  # noqa: ANN202
+    result = CliRunner().invoke(cli.app, ["eval", "--config", str(config), *args])
+    structlog.reset_defaults()
+    return result
+
+
+def _prepare(config: Path, notebooks: list[tuple[str, list[Cell]]]) -> Settings:
+    settings = load_settings(config)
+    save_gold(make_gold(notebooks), settings.paths.gold_path)
+    return settings
+
+
+def test_eval_dev_writes_the_results_file(
+    config: Path, notebooks: list[tuple[str, list[Cell]]], fake_models: list[str]
+) -> None:
+    settings = _prepare(config, notebooks)
+    result = _eval(config)
+    assert result.exit_code == 0, result.output
+    target = settings.paths.results_dir / "retrieval_ablation_dev.json"
+    assert result.stdout.strip() == f"eval: wrote {target}"
+    parsed = DevResults.model_validate_json(target.read_text(encoding="utf-8"))
+    assert parsed.meta.split is Split.DEV
+    assert set(parsed.meta.versions) == {
+        "numpy", "bm25s", "tiktoken", "torch", "sentence-transformers", "transformers",
+    }  # fmt: skip
+    assert sorted(fake_models) == ["base", "small"]
+    assert MARKER not in target.read_text(encoding="utf-8")
+
+
+def test_eval_dev_honours_out_and_needs_a_synced_database(
+    config: Path, notebooks: list[tuple[str, list[Cell]]], fake_models: list[str], tmp_path: Path
+) -> None:
+    _prepare(config, notebooks)
+    elsewhere = tmp_path / "x" / "dev.json"
+    assert _eval(config, "--out", str(elsewhere)).exit_code == 0
+    assert elsewhere.is_file()
+
+
+def test_eval_test_requires_a_milestone(config: Path, fake_models: list[str]) -> None:
+    result = _eval(config, "--split", "test")
+    assert result.exit_code == 1
+    assert "needs --milestone" in result.stderr
+
+
+def _clean_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "git_state", lambda: GIT)
+
+
+def _with_decided(config: Path, pipeline_toml: str = 'lexical = "code"\n') -> None:
+    text = config.read_text(encoding="utf-8")
+    config.write_text(
+        text
+        + f"\n[retrieval.decided]\nchunk_cap = 64\n\n[retrieval.decided.pipeline]\n{pipeline_toml}",
+        encoding="utf-8",
+    )
+
+
+def test_eval_test_refuses_a_dirty_tree_and_missing_decisions_and_stale_dev_results(
+    config: Path,
+    notebooks: list[tuple[str, list[Cell]]],
+    fake_models: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepare(config, notebooks)
+    assert _eval(config).exit_code == 0
+    dirty = _eval(config, "--split", "test", "--milestone", "M4")
+    assert dirty.exit_code == 1
+    assert "uncommitted changes" in dirty.stderr
+    _clean_git(monkeypatch)
+    undecided = _eval(config, "--split", "test", "--milestone", "M4")
+    assert undecided.exit_code == 1
+    assert "no [retrieval.decided]" in undecided.stderr
+    _with_decided(config, 'lexical = "plain"\n')  # differs from what the dev run decided
+    stale = _eval(config, "--split", "test", "--milestone", "M4")
+    assert stale.exit_code == 1
+    assert "differs from the decisions in the dev results" in stale.stderr
+
+
+def test_eval_test_without_dev_results_fails_clearly(
+    config: Path,
+    notebooks: list[tuple[str, list[Cell]]],
+    fake_models: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepare(config, notebooks)
+    _clean_git(monkeypatch)
+    _with_decided(config)
+    result = _eval(config, "--split", "test", "--milestone", "M4")
+    assert result.exit_code == 1
+    assert "cannot read the dev results" in result.stderr
+
+
+def test_eval_test_runs_once_records_the_ledger_and_loads_only_needed_models(
+    config: Path,
+    notebooks: list[tuple[str, list[Cell]]],
+    fake_models: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _prepare(config, notebooks)
+    assert _eval(config).exit_code == 0  # dev: the decided pipeline is BM25 (code) alone
+    _clean_git(monkeypatch)
+    _with_decided(config)
+    fake_models.clear()
+    first = _eval(config, "--split", "test", "--milestone", "M4")
+    assert first.exit_code == 0, first.output
+    assert fake_models == []  # a lexical-only decision loads no embedding model
+    target = settings.paths.results_dir / "retrieval_test_M4.json"
+    parsed = TestResults.model_validate_json(target.read_text(encoding="utf-8"))
+    assert parsed.milestone == "M4"
+    ledger = read_ledger(settings.paths.results_dir / "test_ledger.json")
+    assert [e.milestone for e in ledger.entries] == ["M4"]
+    assert ledger.entries[0].results_sha256 == file_sha256(target)
+    assert ledger.entries[0].git_sha == GIT.sha
+    before = target.read_bytes()
+    second = _eval(config, "--split", "test", "--milestone", "M4")
+    assert second.exit_code == 1
+    assert "already run for milestone M4" in second.stderr
+    assert target.read_bytes() == before  # a refused second run leaves the results untouched
+
+
+def test_eval_test_loads_the_decided_embedding_model_only(
+    config: Path,
+    notebooks: list[tuple[str, list[Cell]]],
+    fake_models: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _prepare(config, notebooks)
+    assert _eval(config).exit_code == 0
+    dev_path = settings.paths.results_dir / "retrieval_ablation_dev.json"
+    dev = DevResults.model_validate_json(dev_path.read_text(encoding="utf-8"))
+    forced = dev.model_copy(
+        update={"decided": DecidedConfig(chunk_cap=64, pipeline=PipelineSpec(dense_model="base"))}
+    )
+    dev_path.write_text(forced.model_dump_json(), encoding="utf-8")
+    _clean_git(monkeypatch)
+    _with_decided(config, 'dense_model = "base"\n')
+    fake_models.clear()
+    assert _eval(config, "--split", "test", "--milestone", "M4").exit_code == 0
+    assert fake_models == ["base"]
+
+
+def test_eval_dev_without_a_synced_database_fails_clearly(
+    config: Path, fake_models: list[str]
+) -> None:
+    ref = CellRef(notebook_path="n.ipynb", raw_hash="h")
+    queries = tuple(
+        GoldQuery(id=f"q{n}", text="t", type=QueryType.CONCEPT, relevant=(ref,)) for n in range(6)
+    )
+    save_gold(freeze_gold(GoldSet(queries=queries)), load_settings(config).paths.gold_path)
+    result = _eval(config)
+    assert result.exit_code == 1
+    assert "the database has no notebooks" in result.stderr
