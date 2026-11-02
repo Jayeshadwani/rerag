@@ -139,3 +139,13 @@ class Chunk(BaseModel):
     tokens: int = Field(ge=0)
     flags: tuple[OversizeReason, ...] = ()
     cell_hashes: tuple[str, ...]
+
+
+class RetrievalHit(BaseModel):
+    """One ranked result of a retriever: the chunk id, its score at that stage, and its rank."""
+
+    model_config = ConfigDict(frozen=True)
+
+    chunk_id: str
+    score: float
+    rank: int = Field(ge=1)

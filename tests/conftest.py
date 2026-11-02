@@ -80,6 +80,32 @@ encoding = "tiny-bytes"
 
 [chunking]
 candidate_caps = [64, 128]
+
+[retrieval]
+candidate_depth = 5
+fused_depth = 3
+final_k = 2
+budget_tokens = 100
+sensitivity_budgets = [50, 200]
+rrf_default = 60
+rrf_challengers = [10, 30]
+latency_budget_ms = 1000.0
+
+[[embeddings.candidates]]
+id = "small"
+revision = "r1"
+query_prefix = "q: "
+passage_prefix = ""
+
+[[embeddings.candidates]]
+id = "base"
+revision = "r2"
+query_prefix = "q: "
+passage_prefix = "p: "
+
+[rerank.model]
+id = "ranker"
+revision = "r3"
 """,
         encoding="utf-8",
     )

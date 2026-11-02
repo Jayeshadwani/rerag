@@ -1,22 +1,33 @@
 """SQLite store. Implements ADR-008 (SQLite for everything except vectors) and ADR-003.
 
-Schema version 1 holds cleaned notebooks and cells. `PRAGMA user_version` records the
-schema version; a database from a newer version is refused instead of being modified.
+Schema version 1 holds cleaned notebooks and cells; version 2 adds the `embeddings` cache
+(vectors keyed by a hash of model, revision and the exact text embedded). `PRAGMA user_version`
+records the schema version; a version 1 database is upgraded in place by adding that table, and
+a database from a newer version is refused instead of being modified.
 Duplicate cells are *marked* by the `duplicate_cells` view (every copy after the first),
 never deleted. Reading never writes: opening an up-to-date database performs no changes.
 """
 
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict
 
 from noterecall.models import Cell, CellType, Notebook
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+_EMBEDDINGS_TABLE = """
+CREATE TABLE embeddings (
+    key TEXT PRIMARY KEY,
+    dim INTEGER NOT NULL,
+    vec BLOB NOT NULL
+);
+"""
 
 _SCHEMA = """
 CREATE TABLE notebooks (
@@ -84,7 +95,9 @@ class DuplicateCounts(BaseModel):
 
 def _create_schema(conn: sqlite3.Connection) -> None:
     with conn:
-        conn.executescript(f"BEGIN;{_SCHEMA}PRAGMA user_version = {SCHEMA_VERSION};COMMIT;")
+        conn.executescript(
+            f"BEGIN;{_SCHEMA}{_EMBEDDINGS_TABLE}PRAGMA user_version = {SCHEMA_VERSION};COMMIT;"
+        )
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -93,6 +106,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         return
     if version > SCHEMA_VERSION:
         raise StoreError(f"database schema v{version} is newer than supported v{SCHEMA_VERSION}")
+    if version == 1:
+        with conn:
+            conn.executescript(f"BEGIN;{_EMBEDDINGS_TABLE}PRAGMA user_version = 2;COMMIT;")
+        return
     if conn.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]:
         raise StoreError("database has tables but no schema version; refusing to modify it")
     _create_schema(conn)
@@ -208,3 +225,23 @@ def notebook_cells(conn: sqlite3.Connection) -> Iterator[tuple[str, list[Cell]]]
         )
     if current is not None:
         yield current, cells
+
+
+def embeddings_get(conn: sqlite3.Connection, keys: Sequence[str]) -> dict[str, np.ndarray]:
+    """Cached vectors for the keys that exist (float32); missing keys are simply absent."""
+    found: dict[str, np.ndarray] = {}
+    for start in range(0, len(keys), 500):
+        batch = list(keys[start : start + 500])
+        marks = ",".join("?" for _ in batch)
+        rows = conn.execute(f"SELECT key, vec FROM embeddings WHERE key IN ({marks})", batch)  # noqa: S608 - placeholders only
+        found.update({key: np.frombuffer(blob, dtype=np.float32).copy() for key, blob in rows})
+    return found
+
+
+def embeddings_put(conn: sqlite3.Connection, items: Mapping[str, np.ndarray]) -> None:
+    """Store vectors (as float32) under their keys; an existing key is left untouched."""
+    rows = [
+        (key, int(vec.shape[0]), vec.astype(np.float32).tobytes()) for key, vec in items.items()
+    ]
+    with conn:
+        conn.executemany("INSERT OR IGNORE INTO embeddings (key, dim, vec) VALUES (?, ?, ?)", rows)
