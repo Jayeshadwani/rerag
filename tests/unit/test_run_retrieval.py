@@ -376,6 +376,11 @@ def _clean_git(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "git_state", lambda: GIT)
 
 
+def _dirty_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    dirty = GitState(sha=GIT.sha, dirty=True)
+    monkeypatch.setattr(cli, "git_state", lambda: dirty)
+
+
 def _with_decided(config: Path, pipeline_toml: str = 'lexical = "code"\n') -> None:
     text = config.read_text(encoding="utf-8")
     config.write_text(
@@ -393,6 +398,7 @@ def test_eval_test_refuses_a_dirty_tree_and_missing_decisions_and_stale_dev_resu
 ) -> None:
     _prepare(config, notebooks)
     assert _eval(config).exit_code == 0
+    _dirty_git(monkeypatch)  # the result must not depend on the checkout the tests run in
     dirty = _eval(config, "--split", "test", "--milestone", "M4")
     assert dirty.exit_code == 1
     assert "uncommitted changes" in dirty.stderr
