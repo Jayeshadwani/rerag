@@ -41,6 +41,7 @@ from noterecall.llm.prompts import load_prompt
 from noterecall.llm.transport import CachingClient
 from noterecall.models import Cell, Chunk, RetrievalHit
 from noterecall.retrieval.pipeline import AbstentionSignals, PipelineError, PipelineSpec
+from render_results import main as render_main
 
 Notebooks = list[tuple[str, list[Cell]]]
 NEVER_REFUSE = (-1.0, -1.0)  # stage 1 refuses when both signals are below these: never
@@ -475,3 +476,33 @@ def test_the_cosine_only_row_applies_the_cosine_only_threshold_to_the_cosine(
     assert 0 < expected.false_refusals < expected.answerable  # a real, partial refusal
     assert results.rows[1].metrics.false_refusals == 0  # the shipped thresholds refuse nothing
     assert results.cosine_only_threshold == 0.6
+
+
+def test_the_generation_results_render_with_counts_per_kind_of_query(
+    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    settings = decided_settings(load_settings(config), NEVER_REFUSE)
+    resources = make_resources(settings, notebooks, tiny_tokenizer)
+
+    def responder(p: Prompt) -> str:
+        if "nothing" in p.variable:  # the synthetic unanswerable queries
+            return json.dumps({"insufficient": True, "claims": []})
+        return answer_with_first_note(p)
+
+    generator, _ = make_generator(settings, tmp_path, responder)
+    results = run_generation(
+        settings, make_gold(notebooks), resources, CONTEXT, generator, Split.DEV
+    )
+    path = tmp_path / "generation_dev.json"
+    path.write_text(results.model_dump_json(), encoding="utf-8")
+    assert render_main([str(path)]) == 0
+    out = capsys.readouterr().out
+    unanswerable = results.rows[2].metrics.unanswerable
+    answerable = results.rows[2].metrics.answerable
+    assert f"| answerable | {answerable} | {answerable} | 0/{answerable} | 0 | 0 | 0 |" in out
+    row = f"| unanswerable | {unanswerable} | 0 | {unanswerable}/{unanswerable} | 0 | "
+    assert row + f"{unanswerable} | 0 |" in out
+    assert "| two-stage (ships) | 0/" in out
+    assert "Total cost $" in out
+    assert "answered answerable queries citing a gold-relevant chunk" in out

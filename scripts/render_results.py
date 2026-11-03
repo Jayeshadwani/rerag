@@ -2,7 +2,7 @@
 
 Renders `corpus_stats.json`, `chunk_stats.json`, `evidence_rule_eval.json`,
 `bootstrap_validation.json`,
-the M4 retrieval results and the M5 header row; later milestones add their files.
+the M4 results, the M5 header row and the M6 generation results; later milestones add their files.
 Every number printed is read from the file (or a ratio of two numbers in it); none is typed
 by hand. Usage: `python scripts/render_results.py results/corpus_stats.json`.
 """
@@ -16,11 +16,12 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from noterecall.chunking.report import ChunkStats
+from noterecall.eval.run_generation import GenerationResults
 from noterecall.eval.run_header import HeaderDevResults
 from noterecall.eval.run_retrieval import DevResults, TestResults
 from noterecall.eval.stats import BootstrapValidation
 from noterecall.ingest.stats import CorpusStats, Distribution, GitState
-from render_retrieval import render_dev, render_header, render_test
+from render_retrieval import render_dev, render_generation, render_header, render_test
 
 
 class Interval(BaseModel):
@@ -213,13 +214,16 @@ def load_results(
     | BootstrapValidation
     | DevResults
     | HeaderDevResults
+    | GenerationResults
     | TestResults
 ):
     """Read a results file and validate it as the report type its keys identify."""
     text = path.read_text(encoding="utf-8")
     keys = json.loads(text)
     model: type[BaseModel] = CorpusStats
-    if "rows" in keys:
+    if "validity" in keys:
+        model = GenerationResults
+    elif "rows" in keys:
         model = ChunkStats
     elif "ablation" in keys:
         model = HeaderDevResults if "with_header" in keys["ablation"] else DevResults
@@ -244,6 +248,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     if isinstance(report, ChunkStats):
         sys.stdout.write(render_chunk_stats(report))
+    elif isinstance(report, GenerationResults):
+        sys.stdout.write(render_generation(report))
     elif isinstance(report, HeaderDevResults):
         sys.stdout.write(render_header(report))
     elif isinstance(report, DevResults):

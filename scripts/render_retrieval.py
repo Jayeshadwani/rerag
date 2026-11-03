@@ -7,6 +7,7 @@ Every number is read from the results file; nothing is typed by hand. Used by
 from collections.abc import Sequence
 
 from noterecall.eval.ablation import Comparison, ConfigResult
+from noterecall.eval.run_generation import GenerationResults
 from noterecall.eval.run_header import HeaderDevResults
 from noterecall.eval.run_retrieval import DevResults, TestResults
 
@@ -218,3 +219,82 @@ def render_header(result: HeaderDevResults) -> str:
         )
         + "\n"
     )
+
+
+def _count(outcomes: Sequence[str], name: str) -> int:
+    return sum(1 for o in outcomes if o == name)
+
+
+def render_generation(result: GenerationResults) -> str:
+    """The M6 report: outcomes per kind of query, citation validity, the three rows and the cost."""
+    split = result.meta.split.value
+    outcome_rows = []
+    for label, flag in (("answerable", False), ("unanswerable", True)):
+        outs = [q.outcome.value for q in result.queries if q.unanswerable is flag]
+        refused = len(outs) - _count(outs, "answered")
+        outcome_rows.append(
+            [
+                label,
+                str(len(outs)),
+                str(_count(outs, "answered")),
+                f"{refused}/{len(outs)}",
+                str(_count(outs, "refused_stage1")),
+                str(_count(outs, "refused_model")),
+                str(_count(outs, "refused_invalid")),
+            ]
+        )
+    v = result.validity
+    validity = _grid(
+        ("Measure", "Count"),
+        [
+            ["queries sent to the model", str(v.queries_to_model)],
+            ["first attempt valid", f"{v.first_attempt_valid}/{v.queries_to_model}"],
+            ["first attempt unparsable", str(v.first_attempt_unparsable)],
+            ["retried", f"{v.retried}/{v.queries_to_model}"],
+            [
+                "uncited claims, first attempt",
+                f"{v.uncited_claims_first_attempt}/{v.claims_first_attempt}",
+            ],
+            ["unknown citation ids, first attempt", str(v.unknown_citations_first_attempt)],
+            [
+                "answered answerable queries citing a gold-relevant chunk",
+                f"{v.answered_citing_a_relevant_chunk}/{v.answered_answerable}",
+            ],
+        ],
+    )
+    rows = _grid(
+        (
+            "Row",
+            "False refusals (answerable)",
+            "Unanswerable refused",
+            "Precision",
+            "F1 (reference)",
+        ),
+        [
+            [
+                r.name,
+                f"{r.metrics.false_refusals}/{r.metrics.answerable}",
+                f"{r.metrics.caught}/{r.metrics.unanswerable}",
+                "n/a" if r.metrics.precision is None else _f(r.metrics.precision),
+                "n/a" if r.metrics.f1 is None else _f(r.metrics.f1),
+            ]
+            for r in result.rows
+        ],
+    )
+    u = result.total_usage
+    cost = (
+        f"Tokens: input {u.input_tokens} (cached {u.cached_tokens}), output {u.output_tokens} "
+        f"(reasoning {u.reasoning_tokens}). Total cost ${result.total_cost_usd:.4f}."
+    )
+    meta = result.meta
+    footer = (
+        f"{meta.queries} {split} queries, prompt `answer` version "
+        f"{result.meta.prompt_versions['answer']}, commit `{meta.git.sha[:12]}`"
+        f"{' (dirty tree)' if meta.git.dirty else ''}. Stage-1 thresholds: cosine "
+        f"{result.thresholds.cosine:.4f}, BM25 {result.thresholds.bm25:.4f}."
+    )
+    outcomes = _grid(
+        ("Queries", "n", "Answered", "Refused", "by stage 1", "by the model", "invalid twice"),
+        outcome_rows,
+    )
+    return "\n\n".join([outcomes, validity, rows, cost, footer]) + "\n"
