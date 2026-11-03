@@ -7,6 +7,13 @@ import pytest
 import structlog
 from typer.testing import CliRunner
 
+from helpers_retrieval import (
+    CONTEXT,
+    GIT,
+    MARKER,
+    make_gold,
+    make_resources,
+)
 from noterecall import cli
 from noterecall.chunking.tokens import Tokenizer
 from noterecall.config import DecidedConfig, Settings, load_settings
@@ -24,8 +31,6 @@ from noterecall.eval.ledger import read_ledger
 from noterecall.eval.run_retrieval import (
     SEED,
     DevResults,
-    Resources,
-    RunContext,
     RunError,
     TestResults,
     TruncationRow,
@@ -38,68 +43,12 @@ from noterecall.eval.run_retrieval import (
     score_params,
     select_queries,
 )
-from noterecall.index.embeddings import EmbeddingService, EmbeddingSpec, HashEmbedder
-from noterecall.index.store import connect, notebook_cells
 from noterecall.ingest.stats import GitState
 from noterecall.ingest.sync import file_sha256
 from noterecall.models import Cell
-from noterecall.retrieval.pipeline import Depths, PipelineSpec
-from noterecall.retrieval.rerank import OverlapReranker
+from noterecall.retrieval.pipeline import PipelineSpec
 from render_results import main
 from render_retrieval import render_dev, render_test
-
-MARKER = "ZEBRAMARK"
-GIT = GitState(sha="c" * 40, dirty=False)
-CONTEXT = RunContext(git=GIT, versions={"numpy": "0"})
-# (query text, notebook, cell index): each query's answer is one cell of the fixtures
-TARGETS = [
-    ("groupby mean of each key", "01_no_headings.ipynb", 3),
-    ("cross_val_score k-fold estimates", "02_deep_headings.ipynb", 5),
-    ("train_test_split import", "02_deep_headings.ipynb", 4),
-    ("groupby drops rows whose key is NaN", "01_no_headings.ipynb", 5),
-]
-
-
-@pytest.fixture
-def notebooks(config: Path) -> list[tuple[str, list[Cell]]]:
-    assert CliRunner().invoke(cli.app, ["sync", "--config", str(config)]).exit_code == 0
-    structlog.reset_defaults()  # the CLI pointed logging at a stream that is now closed
-    conn = connect(load_settings(config).paths.db_path)
-    try:
-        return list(notebook_cells(conn))
-    finally:
-        conn.close()
-
-
-def make_gold(notebooks: list[tuple[str, list[Cell]]], frozen: bool = True) -> GoldSet:
-    hashes = {(p, c.index): c.raw_hash for p, cells in notebooks for c in cells}
-    queries = []
-    for n in range(24):
-        text, path, index = TARGETS[n % len(TARGETS)]
-        if n % 6 == 5:
-            queries.append(
-                GoldQuery(id=f"q{n:02d}", text=f"{MARKER} nothing", type=QueryType.UNANSWERABLE)
-            )
-            continue
-        qtype = [QueryType.CONCEPT, QueryType.CODE_IDENTIFIER, QueryType.HOW_DID_I][n % 3]
-        ref = CellRef(notebook_path=path, raw_hash=hashes[(path, index)])
-        queries.append(
-            GoldQuery(id=f"q{n:02d}", text=f"{text} {MARKER}", type=qtype, relevant=(ref,))
-        )
-    gold = GoldSet(queries=tuple(queries))
-    return freeze_gold(gold) if frozen else gold
-
-
-def make_resources(
-    settings: Settings, notebooks: list[tuple[str, list[Cell]]], tok: Tokenizer
-) -> Resources:
-    services = {
-        spec.id: EmbeddingService(HashEmbedder(), spec) for spec in settings.embeddings.candidates
-    }
-    depths = Depths(
-        candidate=settings.retrieval.candidate_depth, fused=settings.retrieval.fused_depth
-    )
-    return Resources(notebooks, tok, services, OverlapReranker(), depths)
 
 
 def test_select_queries_returns_answerable_queries_of_the_split(
@@ -357,20 +306,6 @@ def test_an_unknown_embedding_model_is_a_loud_error(
         resources.pipeline(
             RunKey(cap=64, chunker="structural", spec=PipelineSpec(dense_model="missing"))
         )
-
-
-@pytest.fixture
-def fake_models(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Replace the real model loaders; returns the ids of the embedding models that were loaded."""
-    loaded: list[str] = []
-
-    def embedder(spec: EmbeddingSpec) -> HashEmbedder:
-        loaded.append(spec.id)
-        return HashEmbedder()
-
-    monkeypatch.setattr(cli, "load_embedder", embedder)
-    monkeypatch.setattr(cli, "load_cross_encoder", lambda _spec: OverlapReranker())
-    return loaded
 
 
 def _eval(config: Path, *args: str):  # type: ignore[no-untyped-def]  # noqa: ANN202

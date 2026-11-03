@@ -12,10 +12,16 @@ import pytest
 import structlog
 import tiktoken
 from hypothesis import settings
+from typer.testing import CliRunner
 
 from make_fixtures import FIXTURE_DIR
 from noterecall import cli
 from noterecall.chunking.tokens import Tokenizer
+from noterecall.config import load_settings
+from noterecall.index.embeddings import EmbeddingSpec, HashEmbedder
+from noterecall.index.store import connect, notebook_cells
+from noterecall.models import Cell
+from noterecall.retrieval.rerank import OverlapReranker
 
 RULES_PATH = Path(__file__).resolve().parents[1] / "config" / "cleaning_rules.yaml"
 
@@ -92,7 +98,7 @@ timeout_s = 5.0
 max_retries = 2
 concurrency = 2
 max_usd = 1.0
-cache_path = "llm_cache.sqlite"
+cache_path = "{tmp_path / "state" / "llm_cache.sqlite"}"
 
 [llm.prices."test-model"]
 input = 1.0
@@ -128,3 +134,29 @@ revision = "r3"
         encoding="utf-8",
     )
     return path
+
+
+@pytest.fixture
+def notebooks(config: Path) -> list[tuple[str, list[Cell]]]:
+    """The fixture corpus after `noterecall sync`, as stored cells."""
+    assert CliRunner().invoke(cli.app, ["sync", "--config", str(config)]).exit_code == 0
+    structlog.reset_defaults()  # the CLI pointed logging at a stream that is now closed
+    conn = connect(load_settings(config).paths.db_path)
+    try:
+        return list(notebook_cells(conn))
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def fake_models(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace the real model loaders; returns the ids of the embedding models that were loaded."""
+    loaded: list[str] = []
+
+    def embedder(spec: EmbeddingSpec) -> HashEmbedder:
+        loaded.append(spec.id)
+        return HashEmbedder()
+
+    monkeypatch.setattr(cli, "load_embedder", embedder)
+    monkeypatch.setattr(cli, "load_cross_encoder", lambda _spec: OverlapReranker())
+    return loaded
