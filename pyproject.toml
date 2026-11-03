@@ -12,6 +12,7 @@ dependencies = [
     "bm25s==0.3.16",
     "nbformat==5.11.1",
     "numpy==2.5.4",
+    "openai==3.42.1",
     "pydantic==2.14.1",
     "pydantic-settings==2.16.2",
     "pyyaml==6.0.3",

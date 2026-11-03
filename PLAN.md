@@ -13,7 +13,7 @@
 | # | Assumption | If wrong |
 |---|---|---|
 | A1 | Notebooks live outside the repo (`data/raw/`, git-ignored). Only small synthetic fixture notebooks are committed. | If you want them in the repo, keep them in a private repo anyway. |
-| A2 | LLM = Anthropic API (Claude), model names in config only. Embeddings + reranker run locally (sentence-transformers, CPU). | Swap the `LLMClient` implementation; nothing else changes. |
+| A2 | LLM = OpenAI API (amended by proposal 004; was Anthropic), model names in config only. Embeddings + reranker run locally (sentence-transformers, CPU). | Swap the `LLMClient` implementation; nothing else changes. |
 | A3 | Single user, local machine, CLI-first. FastAPI is a thin layer added last. | — |
 | A4 | Sync is run manually (`noterecall sync`), never on a watcher. | — |
 | A5 | Later sources (handwritten notes, PDFs, slides) are **out of scope** for v1 but must plug in through the `SourceLoader` protocol. | — |
@@ -74,10 +74,10 @@ src/noterecall/
     dense.py  lexical_search.py  fusion.py (RRF)  rerank.py  pipeline.py
   enrich/
     headers.py           deterministic "notebook > H1 > H2" header
-    contextual.py        LLM contextual blurb (Anthropic Contextual Retrieval style)
+    contextual.py        LLM contextual blurb (Contextual Retrieval style)
   llm/
     client.py            LLMClient Protocol: complete_json(prompt, schema) -> model
-    anthropic_client.py  real client, prompt caching, retries, token/cost logging
+    openai_client.py     real client, automatic prefix caching, retries, token/cost logging
     fake.py              deterministic fake for tests (replays fixtures)
     cache.py             key = sha256(model, prompt_version, input)
     prompts/*.md         versioned prompt files; version = file hash
@@ -140,8 +140,9 @@ A chunk = a markdown heading section and its following cells, split on **cell bo
 **Data-decided:** reranker must beat no-reranker on dev under the ADR-010 rule **and** stay within the latency budget (§6). If it fails, it ships off and that is reported.
 **Result (M4, dev, `results/retrieval_ablation_dev.json`):** rerank vs no rerank (hybrid, bge-base, k=10), Recall@10 -0.070 [-0.168, +0.024] (not adopted); p95 total latency 1,630 ms vs the 1,000 ms budget on the 4-vCPU machine of the run. The reranker ships off.
 
-### ADR-007 — Context headers: deterministic always, LLM blurb data-decided
-Every chunk is indexed (both BM25 and dense) with `"{notebook title} > {H1} > {H2}"` prepended. The LLM contextual blurb (Anthropic's method, with prompt caching on the notebook) is an ablation. Hypothesis to test: for well-structured notebooks the free deterministic header captures most of the gain. Either outcome is a good interview story.
+### ADR-007 — Context headers: deterministic always, LLM blurb data-decided (amended by proposal 004)
+Every chunk is indexed (both BM25 and dense) with `"{notebook title} > {H1} > {H2}"` prepended. The LLM contextual blurb (the Contextual Retrieval method, with the notebook as a shared prefix that the provider caches) is an ablation. Hypothesis to test: for well-structured notebooks the free deterministic header captures most of the gain. Either outcome is a good interview story.
+*Amended by proposal 004, `docs/proposals/004-llm-provider-openai.md` (approved by the owner): the LLM provider is OpenAI; the blurb method is provider-agnostic.*
 
 ### ADR-008 — Storage: SQLite + NumPy exact search, no vector DB
 Corpus is ~53 notebooks → low thousands of chunks. Exact cosine over a few thousand vectors is a single matrix multiply (milliseconds) with perfect recall; an ANN index adds approximation error and ops cost for zero benefit. SQLite holds everything else (one file, transactional, inspectable). **Revisit trigger:** > 200k chunks or p95 dense search > 50 ms → FAISS/HNSW. Write this trigger in the README.
@@ -210,7 +211,7 @@ At least one row is expected to **not** help. Report it. A negative result you c
 
 ## 5. Allowed dependencies (anything else → proposal)
 
-Python 3.12, `uv`, `nbformat`, `pydantic`, `pydantic-settings`, `typer`, `numpy`, `bm25s`, `sentence-transformers` (+ `torch` CPU), `tiktoken` (or one tokenizer — pick once), `anthropic`, `fsrs`, `pyyaml`, `fastapi`, `uvicorn`, `structlog`. Dev: `pytest`, `pytest-cov`, `hypothesis`, `ruff`, `mypy`, `mutmut`.
+Python 3.12, `uv`, `nbformat`, `pydantic`, `pydantic-settings`, `typer`, `numpy`, `bm25s`, `sentence-transformers` (+ `torch` CPU), `tiktoken` (or one tokenizer — pick once), `openai`, `fsrs`, `pyyaml`, `fastapi`, `uvicorn`, `structlog`. Dev: `pytest`, `pytest-cov`, `hypothesis`, `ruff`, `mypy`, `mutmut`.
 Pin exact versions in `uv.lock`. **Verify each library's installed API before use** (e.g. `fsrs` changed its API across major versions: old releases used `FSRS()`, current uses `Scheduler()`).
 
 ---

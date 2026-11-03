@@ -81,6 +81,24 @@ encoding = "tiny-bytes"
 [chunking]
 candidate_caps = [64, 128]
 
+[llm]
+provider = "openai"
+blurb_model = "test-model"
+clean_model = "test-model"
+reasoning_effort = "minimal"
+max_output_tokens_blurb = 50
+max_output_tokens_clean = 200
+timeout_s = 5.0
+max_retries = 2
+concurrency = 2
+max_usd = 1.0
+cache_path = "llm_cache.sqlite"
+
+[llm.prices."test-model"]
+input = 1.0
+cached_input = 0.1
+output = 4.0
+
 [retrieval]
 candidate_depth = 5
 fused_depth = 3

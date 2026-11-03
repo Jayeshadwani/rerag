@@ -9,9 +9,9 @@ raise `ConfigError`; nothing falls back silently.
 
 import tomllib
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -114,6 +114,42 @@ class RerankConfig(BaseModel):
     model: RerankSpec
 
 
+class PriceConfig(BaseModel):
+    """USD per one million tokens for one model (supplied by the owner, never guessed)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    input: float = Field(ge=0)
+    cached_input: float = Field(ge=0)
+    output: float = Field(ge=0)
+
+
+class LlmConfig(BaseModel):
+    """LLM provider settings (proposal 004). The API key comes from the environment, not here."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider: Literal["openai"]
+    blurb_model: str
+    clean_model: str
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+    max_output_tokens_blurb: int = Field(ge=1)
+    max_output_tokens_clean: int = Field(ge=1)
+    timeout_s: float = Field(gt=0)
+    max_retries: int = Field(ge=0)
+    concurrency: int = Field(ge=1)
+    max_usd: float = Field(gt=0)
+    cache_path: Path
+    prices: dict[str, PriceConfig]
+
+    @model_validator(mode="after")
+    def _every_model_has_a_price(self) -> Self:
+        for model in {self.blurb_model, self.clean_model}:
+            if model not in self.prices:
+                raise ValueError(f"no [llm.prices] entry for model {model!r}")
+        return self
+
+
 class Settings(BaseSettings):
     """Validated application settings."""
 
@@ -129,6 +165,7 @@ class Settings(BaseSettings):
     cleaning: CleaningConfig
     tokenizer: TokenizerConfig
     chunking: ChunkingConfig
+    llm: LlmConfig
     retrieval: RetrievalConfig
     embeddings: EmbeddingsConfig
     rerank: RerankConfig
