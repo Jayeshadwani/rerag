@@ -34,6 +34,7 @@ from noterecall.eval.ablation import (
     run_ablation,
     summarize_latency,
 )
+from noterecall.eval.coverage import CoverageIndex
 from noterecall.eval.gold import CellKey, GoldSet, QueryType, Split, relevant_keys
 from noterecall.eval.metrics import score_query
 from noterecall.eval.stats import BOOTSTRAP_RESAMPLES, CONFIDENCE
@@ -114,6 +115,7 @@ class Resources:
         self._chunks: dict[tuple[int, Chunker], list[Chunk]] = {}
         self._lexical: dict[tuple[int, Chunker, str], LexicalIndex] = {}
         self._dense: dict[tuple[int, Chunker, str], DenseIndex] = {}
+        self._coverage: CoverageIndex | None = None
 
     def chunks(self, cap: int, chunker: Chunker) -> list[Chunk]:
         if (cap, chunker) not in self._chunks:
@@ -140,6 +142,12 @@ class Resources:
         parts = Components(lexical=lexical, dense=dense, reranker=self.reranker)
         return RetrievalPipeline(spec, {c.id: c for c in chunks}, self._depths, parts)
 
+    def coverage(self) -> CoverageIndex:
+        """Token counts of every cell, for the secondary token-coverage metric."""
+        if self._coverage is None:
+            self._coverage = CoverageIndex(self._notebooks, self._tokenizer)
+        return self._coverage
+
     def _service(self, model: str) -> EmbeddingService:
         if model not in self.services:
             raise RunError(f"no embedding model {model!r} was provided")
@@ -162,6 +170,7 @@ def make_evaluator(
 
     def evaluate(key: RunKey) -> ConfigResult:
         pipeline = resources.pipeline(key)
+        coverage = resources.coverage()
         chunks = resources.chunks(key.cap, key.chunker)
         by_id = {c.id: c for c in chunks}
         pipeline.retrieve(queries[0].text)  # warm-up: models loaded, caches filled, not timed
@@ -171,9 +180,14 @@ def make_evaluator(
             hits, stage_times = pipeline.retrieve(query.text)
             times.append(stage_times)
             ranked = [by_id[h.chunk_id] for h in hits]
-            per_query[query.id] = score_query(
+            scores = score_query(
                 ranked, query.relevant, chunks, ks=params.ks, budgets=params.budgets
             )
+            for budget in params.budgets:
+                scores[f"tokcov@tokens={budget}"] = coverage.at_budget(
+                    ranked, query.relevant, budget
+                )
+            per_query[query.id] = scores
         metrics = next(iter(per_query.values())).keys()
         means = {m: sum(s[m] for s in per_query.values()) / len(per_query) for m in metrics}
         log.info("eval.config", name=describe(key), recall_at_10=round(means["recall@10"], 4))
@@ -250,6 +264,7 @@ class DevResults(BaseModel):
     truncation: tuple[TruncationRow, ...]
     sensitivity: tuple[ConfigResult, ...]
     decided: DecidedConfig
+    notes: tuple[str, ...] = ()
 
 
 class TestResults(BaseModel):
@@ -262,8 +277,8 @@ class TestResults(BaseModel):
     milestone: str
     decided: DecidedConfig
     chosen: ConfigResult
-    reference: ConfigResult
-    comparison: Comparison
+    references: tuple[ConfigResult, ...]
+    comparisons: tuple[Comparison, ...]
 
 
 def hardware_info() -> HardwareInfo:
@@ -305,6 +320,7 @@ def ablation_params(settings: Settings) -> AblationParams:
         caps=caps,
         baseline_cap=sorted(caps)[len(caps) // 2],
         budget_metric=f"recall@tokens={r.budget_tokens}",
+        secondary_metric=f"tokcov@tokens={r.budget_tokens}",
         embedding_models=tuple(c.id for c in settings.embeddings.candidates),
         rrf_default=r.rrf_default,
         rrf_challengers=r.rrf_challengers,
@@ -339,6 +355,22 @@ def truncation_rows(
     return tuple(rows)
 
 
+def limitation_notes(rows: Sequence[TruncationRow], decided: DecidedConfig) -> tuple[str, ...]:
+    """Known limitations to print next to the results (the decided model's truncation)."""
+    model = decided.pipeline.dense_model
+    if model is None:
+        return ()
+    row = next((r for r in rows if r.model == model and r.cap == decided.chunk_cap), None)
+    if row is None:
+        raise RunError(f"no truncation count for {model} at cap {decided.chunk_cap}")
+    share = 100 * row.truncated / row.chunks
+    return (
+        f"Known limitation: at chunk cap {row.cap}, {row.truncated} of {row.chunks} chunks "
+        f"({share:.1f}%) are longer than the input limit of {model} and are cut, so dense "
+        "retrieval does not see their tails. The chunker is unchanged.",
+    )
+
+
 def run_dev(
     settings: Settings, gold: GoldSet, resources: Resources, context: RunContext
 ) -> DevResults:
@@ -351,20 +383,38 @@ def run_dev(
         evaluate(RunKey(cap=cap, chunker="structural", spec=ablation.pipeline))
         for cap in params.caps
     )
+    truncation = truncation_rows(resources, params.caps, params.embedding_models)
+    decided = DecidedConfig(chunk_cap=ablation.chunk_cap, pipeline=ablation.pipeline)
     return DevResults(
         meta=make_meta(settings, Split.DEV, queries, context),
         params=params,
         ablation=ablation,
-        truncation=truncation_rows(resources, params.caps, params.embedding_models),
+        truncation=truncation,
         sensitivity=sensitivity,
-        decided=DecidedConfig(chunk_cap=ablation.chunk_cap, pipeline=ablation.pipeline),
+        decided=decided,
+        notes=limitation_notes(truncation, decided),
     )
+
+
+def reference_specs(pipeline: PipelineSpec) -> list[PipelineSpec]:
+    """The comparison rows for the test run: a hybrid is shown against each of its parts;
+    anything else against the BM25 baseline."""
+    if pipeline.lexical is not None and pipeline.dense_model is not None:
+        return [
+            PipelineSpec(dense_model=pipeline.dense_model),
+            PipelineSpec(lexical=pipeline.lexical),
+        ]
+    baseline = PipelineSpec(lexical="code")
+    return [] if pipeline == baseline else [baseline]
 
 
 def run_test(
     settings: Settings, gold: GoldSet, resources: Resources, context: RunContext, milestone: str
 ) -> TestResults:
-    """Evaluate the decided pipeline and the BM25 baseline once on the test split."""
+    """Evaluate the decided pipeline and its comparison rows once on the test split.
+
+    The comparisons are reported, not decided on: the test split is for reporting only.
+    """
     decided = settings.retrieval.decided
     if decided is None:
         raise RunError(
@@ -372,21 +422,22 @@ def run_test(
         )
     queries = select_queries(gold, Split.TEST)
     evaluate = make_evaluator(resources, queries, score_params(settings))
-    chosen = evaluate(RunKey(cap=decided.chunk_cap, chunker="structural", spec=decided.pipeline))
-    reference = evaluate(
-        RunKey(cap=decided.chunk_cap, chunker="structural", spec=PipelineSpec(lexical="code"))
+    cap = decided.chunk_cap
+    chosen = evaluate(RunKey(cap=cap, chunker="structural", spec=decided.pipeline))
+    references = tuple(
+        evaluate(RunKey(cap=cap, chunker="structural", spec=spec))
+        for spec in reference_specs(decided.pipeline)
     )
-    comparison = compare(
-        Rule(stage="test: decided pipeline vs BM25 baseline", metric="recall@10", free=False),
-        chosen,
-        reference,
-        SEED,
+    rule = Rule(stage="test (report only)", metric="recall@10", free=True)
+    comparisons = tuple(
+        compare(rule, chosen, ref, SEED).model_copy(update={"report_only": True})
+        for ref in references
     )
     return TestResults(
         meta=make_meta(settings, Split.TEST, queries, context),
         milestone=milestone,
         decided=decided,
         chosen=chosen,
-        reference=reference,
-        comparison=comparison,
+        references=references,
+        comparisons=comparisons,
     )

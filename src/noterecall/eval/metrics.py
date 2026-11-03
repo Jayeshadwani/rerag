@@ -94,13 +94,13 @@ def ndcg_at_k(
     return dcg / ideal
 
 
-def recall_at_token_budget(
-    ranked: Sequence[Chunk], relevant: Collection[CellKey], budget: int
-) -> float:
-    """Cell recall of the longest rank-order prefix whose total tokens are within the budget."""
+def budget_prefix(ranked: Sequence[Chunk], budget: int) -> list[Chunk]:
+    """The longest rank-order prefix whose total tokens are within the budget.
+
+    Stops at the first chunk that does not fit: no skipping, no truncation.
+    """
     if budget < 1:
         raise MetricsError(f"budget must be at least 1 token, got {budget}")
-    _check(ranked, relevant)
     used = 0
     taken: list[Chunk] = []
     for chunk in ranked:
@@ -108,7 +108,17 @@ def recall_at_token_budget(
             break
         used += chunk.tokens
         taken.append(chunk)
-    return _covered(taken, relevant) / len(set(relevant))
+    return taken
+
+
+def recall_at_token_budget(
+    ranked: Sequence[Chunk], relevant: Collection[CellKey], budget: int
+) -> float:
+    """Cell recall of the longest rank-order prefix whose total tokens are within the budget."""
+    if budget < 1:
+        raise MetricsError(f"budget must be at least 1 token, got {budget}")
+    _check(ranked, relevant)
+    return _covered(budget_prefix(ranked, budget), relevant) / len(set(relevant))
 
 
 def score_query(

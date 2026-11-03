@@ -28,8 +28,11 @@ from noterecall.eval.run_retrieval import (
     RunContext,
     RunError,
     TestResults,
+    TruncationRow,
     ablation_params,
     build_chunks,
+    limitation_notes,
+    reference_specs,
     run_dev,
     run_test,
     score_params,
@@ -164,6 +167,9 @@ def test_run_dev_produces_a_complete_leak_free_result(
         assert set(config_result.per_query) == dev_ids
         assert "recall@10" in config_result.means
         assert "recall@tokens=100" in config_result.means  # config budget_tokens in the fixture
+        for budget in (100, 50, 200):  # the primary budget and both sensitivity budgets
+            assert f"tokcov@tokens={budget}" in config_result.means
+            assert f"recall@tokens={budget}" in config_result.means
     assert results.decided == DecidedConfig(
         chunk_cap=results.ablation.chunk_cap, pipeline=results.ablation.pipeline
     )
@@ -207,13 +213,13 @@ def test_run_test_needs_decided_values_and_a_frozen_gold_set(
         run_test(with_decided, make_gold(notebooks, frozen=False), resources, CONTEXT, "M4")
 
 
-def test_run_test_scores_the_decided_pipeline_and_the_baseline_on_test_queries_only(
+def test_run_test_scores_the_hybrid_against_each_of_its_parts_on_test_queries_only(
     config: Path, notebooks: list[tuple[str, list[Cell]]], tiny_tokenizer: Tokenizer
 ) -> None:
     settings = load_settings(config)
     decided = DecidedConfig(
         chunk_cap=64,
-        pipeline=PipelineSpec(lexical="code", dense_model="small", rrf_k=60, rerank=True),
+        pipeline=PipelineSpec(lexical="code", dense_model="small", rrf_k=60),
     )
     retrieval = settings.retrieval.model_copy(update={"decided": decided})
     with_decided = settings.model_copy(update={"retrieval": retrieval})
@@ -228,11 +234,45 @@ def test_run_test_scores_the_decided_pipeline_and_the_baseline_on_test_queries_o
     assert set(results.chosen.per_query) == test_ids
     assert test_ids.isdisjoint(dev_ids)
     assert results.chosen.key.spec == decided.pipeline
-    assert results.reference.key.spec == PipelineSpec(lexical="code")
-    assert results.reference.key.cap == 64
-    assert results.comparison.candidate == results.chosen.name
-    assert results.comparison.baseline == results.reference.name
+    assert [r.key.spec for r in results.references] == [
+        PipelineSpec(dense_model="small"),
+        PipelineSpec(lexical="code"),
+    ]  # dense-only, then BM25-only, both at the decided cap
+    assert {r.key.cap for r in results.references} == {64}
+    assert [c.baseline for c in results.comparisons] == [r.name for r in results.references]
+    assert all(c.candidate == results.chosen.name for c in results.comparisons)
+    assert all(c.report_only for c in results.comparisons)  # reported, never decided on
+    assert "tokcov@tokens=100" in results.chosen.means
     assert MARKER not in results.model_dump_json()
+
+
+def test_reference_specs() -> None:
+    hybrid = PipelineSpec(lexical="code", dense_model="m", rrf_k=60, rerank=True)
+    assert reference_specs(hybrid) == [PipelineSpec(dense_model="m"), PipelineSpec(lexical="code")]
+    assert reference_specs(PipelineSpec(dense_model="m")) == [PipelineSpec(lexical="code")]
+    assert reference_specs(PipelineSpec(lexical="plain")) == [PipelineSpec(lexical="code")]
+    assert reference_specs(PipelineSpec(lexical="code")) == []  # nothing simpler to compare to
+
+
+def test_limitation_note_reports_the_decided_models_truncation() -> None:
+    rows = (
+        TruncationRow(model="m", cap=256, chunks=100, truncated=1),
+        TruncationRow(model="m", cap=512, chunks=200, truncated=26),
+    )
+    decided = DecidedConfig(chunk_cap=512, pipeline=PipelineSpec(dense_model="m"))
+    (note,) = limitation_notes(rows, decided)
+    assert note == (
+        "Known limitation: at chunk cap 512, 26 of 200 chunks (13.0%) are longer than the input "
+        "limit of m and are cut, so dense retrieval does not see their tails. "
+        "The chunker is unchanged."
+    )
+    assert (
+        limitation_notes(rows, DecidedConfig(chunk_cap=512, pipeline=PipelineSpec(lexical="code")))
+        == ()
+    )
+    missing = DecidedConfig(chunk_cap=1024, pipeline=PipelineSpec(dense_model="m"))
+    with pytest.raises(RunError, match="no truncation count for m at cap 1024"):
+        limitation_notes(rows, missing)
 
 
 def test_params_come_from_config(config: Path) -> None:
@@ -266,7 +306,9 @@ def test_regression_thresholds_on_the_fixture_corpus(
     # at an equal 100-token budget the structural chunker finds more than the fixed windows
     assert by_name["fixed-128 | bm25-code"]["recall@tokens=100"] < bm25["recall@tokens=100"]
     assert results.decided.chunk_cap == 64
-    assert results.decided.pipeline == PipelineSpec(lexical="code")
+    # the hybrid is judged as free, so an equal score is adopted; ties between RRF k go to the
+    # earlier challenger (10)
+    assert results.decided.pipeline == PipelineSpec(lexical="code", dense_model="small", rrf_k=10)
 
 
 def test_results_render_to_markdown_and_dispatch_by_file_kind(
@@ -286,9 +328,12 @@ def test_results_render_to_markdown_and_dispatch_by_file_kind(
     assert (
         "| structural-64 \\| bm25-code | 1.000 | 1.000 |" in text
     )  # a row; the | in the name is escaped
-    assert "skipped: the hybrid was not adopted" in text
+    assert "| 4 rrf k |" in text  # the hybrid is adopted here, so k is tuned
+    assert "Token coverage, structural vs fixed (secondary metric, report only):" in text
+    assert "report only: " in text
+    assert "Known limitation: at chunk cap 64, 0 of " in text
     assert "| Recall@10 by query type | code_identifier (n=" in text
-    assert "Decided: chunk cap 64, lexical code, dense None, RRF k None, rerank False." in text
+    assert "Decided: chunk cap 64, lexical code, dense small, RRF k 10, rerank False." in text
     assert f"{dev.meta.queries} dev queries" in text
     decided = settings.retrieval.model_copy(update={"decided": dev.decided})
     test = run_test(
@@ -381,6 +426,17 @@ def _dirty_git(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "git_state", lambda: dirty)
 
 
+def _decided_toml(config: Path) -> str:
+    """The pipeline table for what the dev run just decided."""
+    dev_path = load_settings(config).paths.results_dir / "retrieval_ablation_dev.json"
+    spec = DevResults.model_validate_json(dev_path.read_text(encoding="utf-8")).decided.pipeline
+    lines = [f'lexical = "{spec.lexical}"'] if spec.lexical else []
+    lines += [f'dense_model = "{spec.dense_model}"'] if spec.dense_model else []
+    lines += [f"rrf_k = {spec.rrf_k}"] if spec.rrf_k is not None else []
+    lines += [f"rerank = {str(spec.rerank).lower()}"]
+    return "\n".join(lines) + "\n"
+
+
 def _with_decided(config: Path, pipeline_toml: str = 'lexical = "code"\n') -> None:
     text = config.read_text(encoding="utf-8")
     config.write_text(
@@ -426,23 +482,27 @@ def test_eval_test_without_dev_results_fails_clearly(
     assert "cannot read the dev results" in result.stderr
 
 
-def test_eval_test_runs_once_records_the_ledger_and_loads_only_needed_models(
+def test_eval_test_runs_once_records_the_ledger_and_loads_only_the_decided_model(
     config: Path,
     notebooks: list[tuple[str, list[Cell]]],
     fake_models: list[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = _prepare(config, notebooks)
-    assert _eval(config).exit_code == 0  # dev: the decided pipeline is BM25 (code) alone
+    assert _eval(config).exit_code == 0  # dev decides the hybrid (code BM25 + dense "small")
     _clean_git(monkeypatch)
-    _with_decided(config)
+    _with_decided(config, _decided_toml(config))
     fake_models.clear()
     first = _eval(config, "--split", "test", "--milestone", "M4")
     assert first.exit_code == 0, first.output
-    assert fake_models == []  # a lexical-only decision loads no embedding model
+    assert fake_models == ["small"]  # only the decided model is loaded, not the other candidate
     target = settings.paths.results_dir / "retrieval_test_M4.json"
     parsed = TestResults.model_validate_json(target.read_text(encoding="utf-8"))
     assert parsed.milestone == "M4"
+    assert [r.key.spec for r in parsed.references] == [
+        PipelineSpec(dense_model="small"),
+        PipelineSpec(lexical="code"),
+    ]
     ledger = read_ledger(settings.paths.results_dir / "test_ledger.json")
     assert [e.milestone for e in ledger.entries] == ["M4"]
     assert ledger.entries[0].results_sha256 == file_sha256(target)

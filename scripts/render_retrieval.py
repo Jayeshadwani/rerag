@@ -29,8 +29,13 @@ def _ms(value: float) -> str:
     return f"{value:,.1f}"
 
 
+def _coverage_metric(budget_metric: str) -> str:
+    return budget_metric.replace("recall@", "tokcov@")
+
+
 def config_rows(configs: Sequence[ConfigResult], budget_metric: str) -> list[list[str]]:
     """One row per configuration with the headline metrics and total latency."""
+    coverage = _coverage_metric(budget_metric)
     return [
         [
             c.name,
@@ -39,6 +44,7 @@ def config_rows(configs: Sequence[ConfigResult], budget_metric: str) -> list[lis
             _f(c.means["mrr@10"]),
             _f(c.means["ndcg@10"]),
             _f(c.means[budget_metric]),
+            _f(c.means[coverage]),
             f"{_ms(c.latency.total.p50)} / {_ms(c.latency.total.p95)}",
         ]
         for c in configs
@@ -54,6 +60,7 @@ def config_table(configs: Sequence[ConfigResult], budget_metric: str) -> str:
         "MRR@10",
         "nDCG@10",
         budget_metric.replace("recall@", "Recall@"),
+        _coverage_metric(budget_metric).replace("tokcov@", "Token coverage@"),
         "Total ms p50 / p95",
     )
     return _grid(header, config_rows(configs, budget_metric))
@@ -63,7 +70,12 @@ def comparison_rows(comparisons: Sequence[Comparison]) -> list[list[str]]:
     """One row per ADR-010 comparison."""
     rows = []
     for c in comparisons:
-        decision = ("ADOPT" if c.decision.adopt else "reject") + f": {c.decision.reason}"
+        label = "ADOPT" if c.decision.adopt else "reject"
+        decision = (
+            f"report only: {c.decision.reason}"
+            if c.report_only
+            else f"{label}: {c.decision.reason}"
+        )
         if c.gate:
             decision += f" ({c.gate})"
         rows.append(
@@ -133,11 +145,14 @@ def render_dev(result: DevResults) -> str:
         f"{meta.queries} dev queries, seed {meta.seed}, {meta.bootstrap_resamples:,} bootstrap "
         f"resamples, commit `{meta.git.sha[:12]}`{' (dirty tree)' if meta.git.dirty else ''}."
     )
+    limitations = [f"{note}" for note in result.notes]
     return (
         "\n\n".join(
             [
                 decision_table(comparisons),
                 *notes,
+                "Token coverage, structural vs fixed (secondary metric, report only):",
+                decision_table(result.ablation.secondary),
                 decided,
                 config_table(result.ablation.configs, budget),
                 "Recall@10 by query type (report only, no decision):",
@@ -145,6 +160,7 @@ def render_dev(result: DevResults) -> str:
                 "Decided pipeline at each chunk cap (report only, no decision):",
                 config_table(result.sensitivity, budget),
                 truncation,
+                *limitations,
                 footer,
             ]
         )
@@ -153,7 +169,7 @@ def render_dev(result: DevResults) -> str:
 
 
 def render_test(result: TestResults) -> str:
-    """The single test-split run: decided pipeline vs the BM25 baseline."""
+    """The single test-split run: the decided pipeline and its comparison rows."""
     budget = f"recall@tokens={result.meta.config['retrieval']['budget_tokens']}"  # type: ignore[index]
     meta = result.meta
     footer = (
@@ -163,8 +179,8 @@ def render_test(result: TestResults) -> str:
     return (
         "\n\n".join(
             [
-                config_table([result.chosen, result.reference], budget),
-                decision_table([result.comparison]),
+                config_table([result.chosen, *result.references], budget),
+                decision_table(result.comparisons),
                 footer,
             ]
         )

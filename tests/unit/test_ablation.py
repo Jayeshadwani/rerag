@@ -1,6 +1,8 @@
 """The staged decisions with hand-made scores. Constant per-query deltas make every interval
 degenerate (low = high = the delta), so each ADR-010 outcome is known in advance."""
 
+from collections.abc import Mapping
+
 import pytest
 
 from noterecall.eval.ablation import (
@@ -24,11 +26,12 @@ from noterecall.retrieval.pipeline import PipelineSpec, StageTimes
 
 QUERIES = [f"q{i}" for i in range(10)]
 BASE = [0.2 + 0.05 * (i % 4) for i in range(10)]  # varied, so deltas are not trivially aligned
-METRICS = ("recall@10", "recall@tokens=100")
+METRICS = ("recall@10", "recall@tokens=100", "tokcov@tokens=100")
 PARAMS = AblationParams(
     caps=(256, 512, 1024),
     baseline_cap=512,
     budget_metric="recall@tokens=100",
+    secondary_metric="tokcov@tokens=100",
     embedding_models=("small", "base", "other"),
     rrf_default=60,
     rrf_challengers=(10, 30),
@@ -42,16 +45,25 @@ def latency(total_p95: float = 100.0) -> Latency:
     return Latency(lexical=stat, dense=stat, fusion=stat, rerank=stat, total=stat)
 
 
-def fake(offsets: dict[str, float], p95: float = 100.0) -> Evaluator:
-    """An evaluator: a configuration's score is BASE plus the offset listed under its name."""
+def fake(
+    offsets: Mapping[str, float | list[float]],
+    p95: float = 100.0,
+    p95_by_name: dict[str, float] | None = None,
+) -> Evaluator:
+    """An evaluator: a configuration's score is BASE plus the offset listed under its name
+    (one number, or one per query). Latency is `p95` unless the name has its own."""
 
     def evaluate(key: RunKey) -> ConfigResult:
         name = describe(key)
         offset = offsets.get(name, 0.0)
-        per_query = {q: dict.fromkeys(METRICS, BASE[i] + offset) for i, q in enumerate(QUERIES)}
+        per_query = {
+            q: dict.fromkeys(METRICS, BASE[i] + (offset[i] if isinstance(offset, list) else offset))
+            for i, q in enumerate(QUERIES)
+        }
         means = {m: sum(s[m] for s in per_query.values()) / len(per_query) for m in METRICS}
+        spent = (p95_by_name or {}).get(name, p95)
         return ConfigResult(
-            name=name, key=key, means=means, per_query=per_query, latency=latency(p95)
+            name=name, key=key, means=means, per_query=per_query, latency=latency(spent)
         )
 
     return evaluate
@@ -272,3 +284,62 @@ def test_an_embedding_stage_result_without_a_dense_model_is_a_loud_error() -> No
 
     with pytest.raises(AblationError, match="without a dense model"):
         run_ablation(broken, PARAMS)
+
+
+HYBRID = "structural-512 | bm25-code + dense:small + rrf60"
+
+
+def test_the_hybrid_is_judged_as_free_and_its_measured_latency_is_recorded() -> None:
+    # deltas alternate +0.2 and -0.1: mean +0.05, with an interval that includes 0. As a
+    # not-free component this would be rejected; the owner's post-hoc rule makes it free.
+    offsets: dict[str, float | list[float]] = {
+        "structural-256 | bm25-code": -0.10,
+        "structural-1024 | bm25-code": -0.10,
+        "structural-512 | dense:small": 0.10,
+        HYBRID: [0.30, 0.0] * 5,
+    }
+    ablation = run_ablation(fake(offsets, p95_by_name={HYBRID: 104.0}), PARAMS)
+    stage = next(s for s in ablation.stages if s.stage == "3 hybrid")
+    (comparison,) = stage.comparisons
+    assert comparison.free
+    assert comparison.ci.low <= 0 <= comparison.ci.high
+    assert comparison.ci.mean == pytest.approx(0.05)
+    assert comparison.decision.adopt
+    assert stage.chosen == HYBRID
+    assert comparison.gate == (
+        "post-hoc: classified free by the owner (proposal 003); "
+        "measured added latency +2.0 ms p50 / +4.0 ms p95"
+    )
+    assert next(s for s in ablation.stages if s.stage == "4 rrf k").comparisons != ()
+
+
+def test_a_hybrid_with_a_negative_mean_is_still_rejected() -> None:
+    offsets: dict[str, float | list[float]] = {
+        "structural-256 | bm25-code": -0.10,
+        "structural-1024 | bm25-code": -0.10,
+        "structural-512 | dense:small": 0.10,
+        HYBRID: [0.0, 0.1] * 5,  # mean 0.05, below dense's 0.10: delta -0.05, interval < 0
+    }
+    ablation = run_ablation(fake(offsets), PARAMS)
+    stage = next(s for s in ablation.stages if s.stage == "3 hybrid")
+    assert not stage.comparisons[0].decision.adopt
+    assert stage.chosen == "structural-512 | dense:small"
+
+
+def test_token_coverage_comparisons_are_reported_but_never_decide() -> None:
+    offsets: dict[str, float | list[float]] = {
+        "structural-256 | bm25-code": -0.10,  # keep 512 as the chunk cap
+        "structural-1024 | bm25-code": -0.10,
+        "structural-512 | bm25-code": 0.0,
+        "fixed-512 | bm25-code": 0.5,  # fixed is far ahead on every metric, including coverage
+        "fixed-256 | bm25-code": 0.5,
+        "fixed-1024 | bm25-code": 0.5,
+    }
+    ablation = run_ablation(fake(offsets), PARAMS)
+    assert len(ablation.secondary) == 3
+    assert all(c.report_only for c in ablation.secondary)
+    assert all(c.metric == "tokcov@tokens=100" for c in ablation.secondary)
+    assert all(c.stage == "0a token coverage (report only)" for c in ablation.secondary)
+    assert all(not c.decision.adopt for c in ablation.secondary)  # computed, but not acted on
+    assert not any(c.report_only for s in ablation.stages for c in s.comparisons)
+    assert ablation.chunk_cap == 512  # the chunker choice does not follow either comparison

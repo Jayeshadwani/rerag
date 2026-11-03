@@ -8,7 +8,8 @@ flag. The stages run in a fixed order and each uses the winner of the one before
    Recall@token-budget (chunk size changes what "top 10" means), probed with BM25 (code tokenizer);
 1. BM25 tokenizer: code-aware vs plain (free);
 2. embedding model: each larger candidate vs the smallest (not free);
-3. hybrid RRF (default k) vs the better single retriever (not free);
+3. hybrid RRF (default k) vs the better single retriever (free, a post-hoc owner decision: it
+   was pre-registered as not free; see proposal 003);
 4. RRF k: each challenger vs the default k (free);
 5. rerank vs no rerank (not free, and p95 latency must stay inside the budget).
 
@@ -85,6 +86,7 @@ class Comparison(BaseModel):
     ci: BootstrapCI
     decision: Decision
     gate: str | None = None
+    report_only: bool = False
 
 
 class StageOutcome(BaseModel):
@@ -108,6 +110,7 @@ class Ablation(BaseModel):
     chunk_cap: int
     pipeline: PipelineSpec
     reference: ConfigResult
+    secondary: tuple[Comparison, ...] = ()
 
 
 class AblationError(Exception):
@@ -125,6 +128,7 @@ class AblationParams(BaseModel):
     caps: tuple[int, ...]
     baseline_cap: int
     budget_metric: str
+    secondary_metric: str
     embedding_models: tuple[str, ...]
     rrf_default: int
     rrf_challengers: tuple[int, ...]
@@ -228,7 +232,7 @@ class _Runner:
     ) -> Comparison:
         return compare(Rule(stage=stage, metric=metric, free=free), cand, base, self._params.seed)
 
-    def chunking(self) -> tuple[int, StageOutcome]:
+    def chunking(self) -> tuple[int, StageOutcome, tuple[Comparison, ...]]:
         probe, metric = PipelineSpec(lexical="code"), self._params.budget_metric
         comparisons = [
             self._compare(
@@ -240,6 +244,16 @@ class _Runner:
             )
             for cap in self._params.caps
         ]
+        secondary = tuple(
+            self._compare(
+                "0a token coverage (report only)",
+                self.run(cap, probe),
+                self.run(cap, probe, "fixed"),
+                self._params.secondary_metric,
+                True,
+            ).model_copy(update={"report_only": True})
+            for cap in self._params.caps
+        )
         base = self.run(self._params.baseline_cap, probe)
         others = [c for c in self._params.caps if c != self._params.baseline_cap]
         challengers = [
@@ -248,9 +262,10 @@ class _Runner:
         ]
         chosen = choose(base, challengers)
         comparisons.extend(c for _, c in challengers)
-        return chosen.key.cap, StageOutcome(
+        outcome = StageOutcome(
             stage="0 chunking", comparisons=tuple(comparisons), chosen=chosen.name
         )
+        return chosen.key.cap, outcome, secondary
 
     def tokenizer(self, cap: int) -> tuple[Literal["plain", "code"], StageOutcome]:
         plain = self.run(cap, PipelineSpec(lexical="plain"))
@@ -283,13 +298,27 @@ class _Runner:
     def hybrid(
         self, cap: int, lexical: Literal["plain", "code"], model: str
     ) -> tuple[PipelineSpec, StageOutcome]:
+        """Hybrid vs the better single retriever.
+
+        Post-hoc: this was pre-registered as "not free" (it needs both retrievers). The owner
+        reclassified it as free after the dev run because the measured added latency is a few
+        milliseconds (proposal 003). The comparison records that and the measured numbers.
+        """
         bm25 = self.run(cap, PipelineSpec(lexical=lexical))
         dense = self.run(cap, PipelineSpec(dense_model=model))
         single = dense if dense.means[PRIMARY] > bm25.means[PRIMARY] else bm25
         hybrid = self.run(
             cap, PipelineSpec(lexical=lexical, dense_model=model, rrf_k=self._params.rrf_default)
         )
-        comparison = self._compare("3 hybrid", hybrid, single, PRIMARY, False)
+        comparison = self._compare("3 hybrid", hybrid, single, PRIMARY, True)
+        added = (
+            f"{hybrid.latency.total.p50 - single.latency.total.p50:+.1f} ms p50 / "
+            f"{hybrid.latency.total.p95 - single.latency.total.p95:+.1f} ms p95"
+        )
+        gate = (
+            f"post-hoc: classified free by the owner (proposal 003); measured added latency {added}"
+        )
+        comparison = comparison.model_copy(update={"gate": gate})
         chosen = choose(single, [(hybrid, comparison)])
         return chosen.key.spec, StageOutcome(
             stage="3 hybrid", comparisons=(comparison,), chosen=chosen.name
@@ -331,7 +360,7 @@ class _Runner:
 def run_ablation(evaluate: Evaluator, params: AblationParams) -> Ablation:
     """Run all stages in order and return every outcome and the decided configuration."""
     runner = _Runner(evaluate, params)
-    cap, chunking = runner.chunking()
+    cap, chunking, secondary = runner.chunking()
     lexical, tokenizer = runner.tokenizer(cap)
     model, embedding = runner.embedding(cap)
     spec, hybrid = runner.hybrid(cap, lexical, model)
@@ -353,4 +382,5 @@ def run_ablation(evaluate: Evaluator, params: AblationParams) -> Ablation:
         chunk_cap=cap,
         pipeline=spec,
         reference=reference,
+        secondary=secondary,
     )
