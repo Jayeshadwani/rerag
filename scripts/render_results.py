@@ -1,8 +1,7 @@
 """Render a results JSON file as Markdown tables (CLAUDE.md: numbers come from results/).
 
-Renders `corpus_stats.json`, `chunk_stats.json`, `evidence_rule_eval.json` and
-`bootstrap_validation.json`; later milestones
-add their result files.
+Renders `corpus_stats.json`, `chunk_stats.json`, `evidence_rule_eval.json`,
+`bootstrap_validation.json` and the M4 retrieval results; later milestones add their files.
 Every number printed is read from the file (or a ratio of two numbers in it); none is typed
 by hand. Usage: `python scripts/render_results.py results/corpus_stats.json`.
 """
@@ -16,8 +15,10 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from noterecall.chunking.report import ChunkStats
+from noterecall.eval.run_retrieval import DevResults, TestResults
 from noterecall.eval.stats import BootstrapValidation
 from noterecall.ingest.stats import CorpusStats, Distribution, GitState
+from render_retrieval import render_dev, render_test
 
 
 class Interval(BaseModel):
@@ -201,12 +202,18 @@ def render_bootstrap_validation(result: BootstrapValidation) -> str:
     return _grid(header, rows) + "\n\n" + note + "\n"
 
 
-def load_results(path: Path) -> CorpusStats | ChunkStats | EvidenceReport | BootstrapValidation:
+def load_results(
+    path: Path,
+) -> CorpusStats | ChunkStats | EvidenceReport | BootstrapValidation | DevResults | TestResults:
     """Read a results file and validate it as the report type its keys identify."""
     text = path.read_text(encoding="utf-8")
     keys = json.loads(text)
     if "rows" in keys:
         return ChunkStats.model_validate_json(text)
+    if "ablation" in keys:
+        return DevResults.model_validate_json(text)
+    if "chosen" in keys:
+        return TestResults.model_validate_json(text)
     if "simulations" in keys:
         return BootstrapValidation.model_validate_json(text)
     if "summary" in keys:
@@ -226,6 +233,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     if isinstance(report, ChunkStats):
         sys.stdout.write(render_chunk_stats(report))
+    elif isinstance(report, DevResults):
+        sys.stdout.write(render_dev(report))
+    elif isinstance(report, TestResults):
+        sys.stdout.write(render_test(report))
     elif isinstance(report, BootstrapValidation):
         sys.stdout.write(render_bootstrap_validation(report))
     elif isinstance(report, EvidenceReport):

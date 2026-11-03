@@ -171,3 +171,26 @@ def test_three_copies_give_two_extra_copies(conn: sqlite3.Connection) -> None:
     replace_notebook(conn, _notebook("a.ipynb", [_cell(0, "H"), _cell(1, "H"), _cell(2, "H")]))
     counts = duplicate_counts(conn)
     assert (counts.within_notebook, counts.across_notebooks) == (2, 0)
+
+
+def test_a_version_1_database_is_upgraded_in_place_without_touching_its_data(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "old.sqlite"
+    raw = sqlite3.connect(path)
+    raw.executescript(
+        "CREATE TABLE notebooks (path TEXT PRIMARY KEY, file_hash TEXT NOT NULL,"
+        " pipeline_hash TEXT NOT NULL, raw_tokens INTEGER NOT NULL,"
+        " clean_tokens INTEGER NOT NULL, counts_json TEXT NOT NULL);"
+        "INSERT INTO notebooks VALUES ('a.ipynb', 'f', 'p', 1, 1, '{}');"
+        "PRAGMA user_version = 1;"
+    )
+    raw.commit()
+    raw.close()
+    conn = connect(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert conn.execute("SELECT path FROM notebooks").fetchall() == [("a.ipynb",)]
+    assert conn.execute("SELECT count(*) FROM embeddings").fetchone()[0] == 0
+    conn.close()
+    again = connect(path)  # upgrading is idempotent
+    assert again.execute("PRAGMA user_version").fetchone()[0] == 2

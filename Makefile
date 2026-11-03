@@ -26,11 +26,14 @@ banned:
 sync:
 	$(UV) noterecall sync
 
-eval:
-	@echo "make eval: not available until M4 (retrieval ablation runner)" >&2; exit 1
+MILESTONE ?= M4
 
+eval:
+	$(UV) noterecall eval --split dev
+
+# Runs the test split ONCE per milestone (the ledger in results/test_ledger.json refuses a repeat).
 eval-test:
-	@echo "make eval-test: not available until M4 (retrieval ablation runner)" >&2; exit 1
+	$(UV) noterecall eval --split test --milestone $(MILESTONE)
 
 results:
 	$(UV) python scripts/render_results.py results/corpus_stats.json

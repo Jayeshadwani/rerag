@@ -18,6 +18,10 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+from noterecall.index.embeddings import EmbeddingSpec
+from noterecall.retrieval.pipeline import PipelineSpec
+from noterecall.retrieval.rerank import RerankSpec
+
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "default.toml"
 
 
@@ -69,6 +73,47 @@ class ChunkingConfig(BaseModel):
     candidate_caps: tuple[Annotated[int, Field(ge=1)], ...] = Field(min_length=1)
 
 
+class DecidedConfig(BaseModel):
+    """Data-decided M4 values. Written only after the experiment produced its results file."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    chunk_cap: int = Field(ge=1)
+    pipeline: PipelineSpec
+
+
+class RetrievalConfig(BaseModel):
+    """Retrieval parameters. The depths and budgets are pre-registered design parameters."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    candidate_depth: int = Field(ge=1)
+    fused_depth: int = Field(ge=1)
+    final_k: int = Field(ge=1)
+    budget_tokens: int = Field(ge=1)
+    sensitivity_budgets: tuple[Annotated[int, Field(ge=1)], ...]
+    rrf_default: int = Field(ge=1)
+    rrf_challengers: tuple[Annotated[int, Field(ge=1)], ...]
+    latency_budget_ms: float = Field(gt=0)
+    decided: DecidedConfig | None = None
+
+
+class EmbeddingsConfig(BaseModel):
+    """Candidate embedding models, smallest first (the first is the ADR-010 baseline)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    candidates: tuple[EmbeddingSpec, ...] = Field(min_length=1)
+
+
+class RerankConfig(BaseModel):
+    """The single cross-encoder (ADR-006)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    model: RerankSpec
+
+
 class Settings(BaseSettings):
     """Validated application settings."""
 
@@ -84,6 +129,9 @@ class Settings(BaseSettings):
     cleaning: CleaningConfig
     tokenizer: TokenizerConfig
     chunking: ChunkingConfig
+    retrieval: RetrievalConfig
+    embeddings: EmbeddingsConfig
+    rerank: RerankConfig
 
     @classmethod
     def settings_customise_sources(

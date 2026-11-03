@@ -25,6 +25,32 @@ encoding = "tiny"
 
 [chunking]
 candidate_caps = [8, 16]
+
+[retrieval]
+candidate_depth = 5
+fused_depth = 3
+final_k = 2
+budget_tokens = 100
+sensitivity_budgets = [50, 200]
+rrf_default = 60
+rrf_challengers = [10, 30]
+latency_budget_ms = 1000.0
+
+[[embeddings.candidates]]
+id = "small"
+revision = "r1"
+query_prefix = "q: "
+passage_prefix = ""
+
+[[embeddings.candidates]]
+id = "base"
+revision = "r2"
+query_prefix = "q: "
+passage_prefix = "p: "
+
+[rerank.model]
+id = "ranker"
+revision = "r3"
 """
 
 
@@ -91,12 +117,12 @@ def test_settings_are_frozen(tmp_path: Path) -> None:
 
 def test_unknown_key_in_section_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="bogus"):
-        load_settings(_write(tmp_path, VALID_TOML + "bogus = 1\n"))
+        load_settings(_write(tmp_path, VALID_TOML.replace("[8, 16]\n", "[8, 16]\nbogus = 1\n")))
 
 
 def test_unknown_section_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="extra"):
-        load_settings(_write(tmp_path, VALID_TOML + "\n[retrieval]\nk = 60\n"))
+        load_settings(_write(tmp_path, VALID_TOML + "\n[nonsense]\nk = 60\n"))
 
 
 def test_invalid_log_level_is_rejected(tmp_path: Path) -> None:
@@ -149,3 +175,45 @@ def test_candidate_caps_must_be_positive_and_non_empty(tmp_path: Path, value: st
 def test_missing_gold_path_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="gold_path"):
         load_settings(_write(tmp_path, VALID_TOML.replace('gold_path = "gold/g.json"\n', "")))
+
+
+def test_retrieval_sections_load_with_models_in_order_and_no_decided_values(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(_write(tmp_path, VALID_TOML))
+    assert [c.id for c in settings.embeddings.candidates] == ["small", "base"]
+    assert settings.embeddings.candidates[1].passage_prefix == "p: "
+    assert settings.rerank.model.revision == "r3"
+    assert settings.retrieval.decided is None
+    assert settings.retrieval.rrf_challengers == (10, 30)
+
+
+def test_decided_values_validate_the_pipeline(tmp_path: Path) -> None:
+    good = (
+        VALID_TOML
+        + """
+[retrieval.decided]
+chunk_cap = 512
+
+[retrieval.decided.pipeline]
+lexical = "code"
+dense_model = "small"
+rrf_k = 60
+rerank = true
+"""
+    )
+    decided = load_settings(_write(tmp_path, good)).retrieval.decided
+    assert decided is not None
+    assert (decided.chunk_cap, decided.pipeline.rrf_k, decided.pipeline.rerank) == (512, 60, True)
+    hybrid_without_k = good.replace("rrf_k = 60\n", "")
+    with pytest.raises(ConfigError, match="rrf_k must be set"):
+        load_settings(_write(tmp_path, hybrid_without_k))
+
+
+def test_embedding_candidates_must_not_be_empty(tmp_path: Path) -> None:
+    text = (
+        VALID_TOML.split("[[embeddings.candidates]]", maxsplit=1)[0]
+        + '[rerank.model]\nid = "r"\nrevision = "v"\n'
+    )
+    with pytest.raises(ConfigError, match="embeddings"):
+        load_settings(_write(tmp_path, text))

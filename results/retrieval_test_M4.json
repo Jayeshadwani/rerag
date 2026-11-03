@@ -1,0 +1,1265 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "split": "test",
+    "git": {
+      "sha": "3ebe1a5c1a34d17acb60ef62974f08a8775bd664",
+      "dirty": false
+    },
+    "config": {
+      "paths": {
+        "raw_dir": "data/rerag-data/notebooks",
+        "db_path": "data/noterecall.sqlite",
+        "results_dir": "results",
+        "gold_path": "data/rerag-data/gold/gold.json"
+      },
+      "logging": {
+        "level": "INFO"
+      },
+      "cleaning": {
+        "rules_path": "config/cleaning_rules.yaml",
+        "max_output_lines": 20
+      },
+      "tokenizer": {
+        "encoding": "cl100k_base"
+      },
+      "chunking": {
+        "candidate_caps": [
+          256,
+          512,
+          1024
+        ]
+      },
+      "retrieval": {
+        "candidate_depth": 50,
+        "fused_depth": 30,
+        "final_k": 10,
+        "budget_tokens": 3072,
+        "sensitivity_budgets": [
+          1536,
+          6144
+        ],
+        "rrf_default": 60,
+        "rrf_challengers": [
+          10,
+          30
+        ],
+        "latency_budget_ms": 1000.0,
+        "decided": {
+          "chunk_cap": 512,
+          "pipeline": {
+            "lexical": "code",
+            "dense_model": "BAAI/bge-base-en-v1.5",
+            "rrf_k": 10,
+            "rerank": false
+          }
+        }
+      },
+      "embeddings": {
+        "candidates": [
+          {
+            "id": "BAAI/bge-small-en-v1.5",
+            "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+            "query_prefix": "Represent this sentence for searching relevant passages: ",
+            "passage_prefix": ""
+          },
+          {
+            "id": "BAAI/bge-base-en-v1.5",
+            "revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+            "query_prefix": "Represent this sentence for searching relevant passages: ",
+            "passage_prefix": ""
+          },
+          {
+            "id": "intfloat/e5-base-v2",
+            "revision": "f52bf8ec8c7124536f0efb74aca902b2995e5bcd",
+            "query_prefix": "query: ",
+            "passage_prefix": "passage: "
+          }
+        ]
+      },
+      "rerank": {
+        "model": {
+          "id": "cross-encoder/ms-marco-MiniLM-L6-v2",
+          "revision": "233902d25c440f23af6f7d6e94d2946bac0bee0a"
+        }
+      }
+    },
+    "tokenizer": "cl100k_base",
+    "versions": {
+      "numpy": "2.5.4",
+      "bm25s": "0.3.16",
+      "tiktoken": "0.14.0",
+      "torch": "2.15.0+cpu",
+      "sentence-transformers": "6.2.0",
+      "transformers": "5.22.1"
+    },
+    "hardware": {
+      "platform": "Linux-6.18.44-fc-v230-x86_64-with-glibc2.39",
+      "machine": "x86_64",
+      "python": "3.12.13",
+      "cpu_count": 4
+    },
+    "prompt_versions": {},
+    "bootstrap_resamples": 10000,
+    "confidence": 0.95,
+    "seed": 20261029,
+    "queries": 22,
+    "query_types": {
+      "q001": "concept",
+      "q003": "code_identifier",
+      "q011": "concept",
+      "q012": "concept",
+      "q019": "concept",
+      "q025": "cross_notebook",
+      "q027": "concept",
+      "q032": "how_did_i",
+      "q035": "code_identifier",
+      "q036": "how_did_i",
+      "q038": "concept",
+      "q040": "concept",
+      "q042": "concept",
+      "q044": "concept",
+      "q047": "code_identifier",
+      "q052": "concept",
+      "q057": "concept",
+      "q058": "concept",
+      "q062": "cross_notebook",
+      "q068": "concept",
+      "q072": "concept",
+      "q077": "concept"
+    }
+  },
+  "milestone": "M4",
+  "decided": {
+    "chunk_cap": 512,
+    "pipeline": {
+      "lexical": "code",
+      "dense_model": "BAAI/bge-base-en-v1.5",
+      "rrf_k": 10,
+      "rerank": false
+    }
+  },
+  "chosen": {
+    "name": "structural-512 | bm25-code + dense:BAAI/bge-base-en-v1.5 + rrf10",
+    "key": {
+      "cap": 512,
+      "chunker": "structural",
+      "spec": {
+        "lexical": "code",
+        "dense_model": "BAAI/bge-base-en-v1.5",
+        "rrf_k": 10,
+        "rerank": false
+      }
+    },
+    "means": {
+      "recall@5": 0.8037878787878788,
+      "mrr@5": 0.7053030303030303,
+      "ndcg@5": 0.5849499660969585,
+      "recall@10": 0.8318181818181819,
+      "mrr@10": 0.7053030303030303,
+      "ndcg@10": 0.6072114434874826,
+      "recall@tokens=3072": 0.85,
+      "recall@tokens=1536": 0.7643939393939394,
+      "recall@tokens=6144": 0.890909090909091,
+      "tokcov@tokens=3072": 0.7071546273929541,
+      "tokcov@tokens=1536": 0.5879919755137465,
+      "tokcov@tokens=6144": 0.7867246878146676
+    },
+    "per_query": {
+      "q001": {
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 0.7039180890341347,
+        "recall@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 0.7039180890341347,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 0.8935643564356436,
+        "tokcov@tokens=1536": 0.8935643564356436,
+        "tokcov@tokens=6144": 0.8935643564356436
+      },
+      "q003": {
+        "recall@5": 0.6666666666666666,
+        "mrr@5": 1.0,
+        "ndcg@5": 0.6131471927654584,
+        "recall@10": 0.6666666666666666,
+        "mrr@10": 1.0,
+        "ndcg@10": 0.6131471927654584,
+        "recall@tokens=3072": 0.6666666666666666,
+        "recall@tokens=1536": 0.6666666666666666,
+        "recall@tokens=6144": 0.6666666666666666,
+        "tokcov@tokens=3072": 0.5238095238095238,
+        "tokcov@tokens=1536": 0.5238095238095238,
+        "tokcov@tokens=6144": 0.5238095238095238
+      },
+      "q011": {
+        "recall@5": 0.08333333333333333,
+        "mrr@5": 0.3333333333333333,
+        "ndcg@5": 0.16958010263680806,
+        "recall@10": 0.16666666666666666,
+        "mrr@10": 0.3333333333333333,
+        "ndcg@10": 0.18340980524840012,
+        "recall@tokens=3072": 0.16666666666666666,
+        "recall@tokens=1536": 0.08333333333333333,
+        "recall@tokens=6144": 0.3333333333333333,
+        "tokcov@tokens=3072": 0.06427221172022685,
+        "tokcov@tokens=1536": 0.03931947069943289,
+        "tokcov@tokens=6144": 0.24877126654064272
+      },
+      "q012": {
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 0.6131471927654584,
+        "recall@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 0.6131471927654584,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 0.16202945990180032,
+        "tokcov@tokens=1536": 0.16202945990180032,
+        "tokcov@tokens=6144": 0.16202945990180032
+      },
+      "q019": {
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "recall@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 1.0,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 1.0,
+        "tokcov@tokens=1536": 1.0,
+        "tokcov@tokens=6144": 1.0
+      },
+      "q025": {
+        "recall@5": 0.3333333333333333,
+        "mrr@5": 0.2,
+        "ndcg@5": 0.15101961822780524,
+        "recall@10": 0.6666666666666666,
+        "mrr@10": 0.2,
+        "ndcg@10": 0.29007579773858083,
+        "recall@tokens=3072": 0.6666666666666666,
+        "recall@tokens=1536": 0.6666666666666666,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 0.5289323553382234,
+        "tokcov@tokens=1536": 0.5289323553382234,
+        "tokcov@tokens=6144": 0.9983700081499592
+      },
+      "q027": {
+        "recall@5": 1.0,
+        "mrr@5": 0.5,
+        "ndcg@5": 0.6240505200038379,
+        "recall@10": 1.0,
+        "mrr@10": 0.5,
+        "ndcg@10": 0.6240505200038379,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 1.0,
+        "tokcov@tokens=1536": 1.0,
+        "tokcov@tokens=6144": 1.0
+      },
+      "q032": {
+        "recall@5": 1.0,
+        "mrr@5": 0.2,
+        "ndcg@5": 0.23719771276929622,
+        "recall@10": 1.0,
+        "mrr@10": 0.2,
+        "ndcg@10": 0.23719771276929622,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 0.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 0.9929712460063898,
+        "tokcov@tokens=1536": 0.0,
+        "tokcov@tokens=6144": 0.9929712460063898
+      },
+      "q035": {
+        "recall@5": 1.0,
+        "mrr@5": 0.5,
+        "ndcg@5": 0.6934264036172708,
+        "recall@10": 1.0,
+        "mrr@10": 0.5,
+        "ndcg@10": 0.6934264036172708,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 1.0,
+        "tokcov@tokens=1536": 1.0,
+        "tokcov@tokens=6144": 1.0
+      },
+      "q036": {
+        "recall@5": 0.2,
+        "mrr@5": 0.2,
+        "ndcg@5": 0.13120507751234178,
+        "recall@10": 0.4,
+        "mrr@10": 0.2,
+        "ndcg@10": 0.15850703974098102,
+        "recall@tokens=3072": 0.4,
+        "recall@tokens=1536": 0.0,
+        "recall@tokens=6144": 0.8,
+        "tokcov@tokens=3072": 0.20779610194902548,
+        "tokcov@tokens=1536": 0.0,
+        "tokcov@tokens=6144": 0.46116941529235383
+      },
+      "q038": {
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 0.46927872602275644,
+        "recall@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 0.46927872602275644,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 0.4683663833805477,
+        "tokcov@tokens=1536": 0.4683663833805477,
+        "tokcov@tokens=6144": 0.5363550519357885
+      },
+      "q040": {
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 0.8687949224876582,
+        "recall@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 0.9818483242455301,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 0.9867768595041322,
+        "tokcov@tokens=1536": 0.7399449035812672,
+        "tokcov@tokens=6144": 0.9867768595041322
+      },
+      "q042": {
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 0.6843515475204855,
+        "recall@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 0.7823908333518426,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 0.5362865221489161,
+        "tokcov@tokens=1536": 0.38407163053722904,
+        "tokcov@tokens=6144": 0.7591894439208294
+      },
+      "q044": {
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 0.639945385422766,
+        "recall@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 0.7796228390769658,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 0.8062183658712943,
+        "tokcov@tokens=1536": 0.30441070137382503,
+        "tokcov@tokens=6144": 0.987707881417209
+      },
+      "q047": {
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "recall@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 1.0,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 1.0,
+        "tokcov@tokens=1536": 1.0,
+        "tokcov@tokens=6144": 1.0
+      },
+      "q052": {
+        "recall@5": 1.0,
+        "mrr@5": 0.25,
+        "ndcg@5": 0.43067655807339306,
+        "recall@10": 1.0,
+        "mrr@10": 0.25,
+        "ndcg@10": 0.43067655807339306,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 1.0,
+        "tokcov@tokens=1536": 1.0,
+        "tokcov@tokens=6144": 1.0
+      },
+      "q057": {
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "recall@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 1.0,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 1.0,
+        "tokcov@tokens=1536": 1.0,
+        "tokcov@tokens=6144": 1.0
+      },
+      "q058": {
+        "recall@5": 0.0,
+        "mrr@5": 0.0,
+        "ndcg@5": 0.0,
+        "recall@10": 0.0,
+        "mrr@10": 0.0,
+        "ndcg@10": 0.0,
+        "recall@tokens=3072": 0.0,
+        "recall@tokens=1536": 0.0,
+        "recall@tokens=6144": 0.0,
+        "tokcov@tokens=3072": 0.0,
+        "tokcov@tokens=1536": 0.0,
+        "tokcov@tokens=6144": 0.0
+      },
+      "q062": {
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 0.830419897363192,
+        "recall@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 0.7892144143602857,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 0.6194331983805668,
+        "tokcov@tokens=1536": 0.3649122807017544,
+        "tokcov@tokens=6144": 0.9902834008097166
+      },
+      "q068": {
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "recall@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 1.0,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 1.0,
+        "tokcov@tokens=1536": 1.0,
+        "tokcov@tokens=6144": 1.0
+      },
+      "q072": {
+        "recall@5": 0.4,
+        "mrr@5": 1.0,
+        "ndcg@5": 0.5087403079104241,
+        "recall@10": 0.4,
+        "mrr@10": 1.0,
+        "ndcg@10": 0.5087403079104241,
+        "recall@tokens=3072": 0.8,
+        "recall@tokens=1536": 0.4,
+        "recall@tokens=6144": 0.8,
+        "tokcov@tokens=3072": 0.7669452181987001,
+        "tokcov@tokens=1536": 0.5264623955431755,
+        "tokcov@tokens=6144": 0.7669452181987001
+      },
+      "q077": {
+        "recall@5": 1.0,
+        "mrr@5": 0.3333333333333333,
+        "ndcg@5": 0.5,
+        "recall@10": 1.0,
+        "mrr@10": 0.3333333333333333,
+        "ndcg@10": 0.5,
+        "recall@tokens=3072": 1.0,
+        "recall@tokens=1536": 1.0,
+        "recall@tokens=6144": 1.0,
+        "tokcov@tokens=3072": 1.0,
+        "tokcov@tokens=1536": 1.0,
+        "tokcov@tokens=6144": 1.0
+      }
+    },
+    "latency": {
+      "lexical": {
+        "p50": 0.5655979999801275,
+        "p95": 0.748148000184301
+      },
+      "dense": {
+        "p50": 159.77272099996753,
+        "p95": 177.96449200000097
+      },
+      "fusion": {
+        "p50": 0.24880699993445887,
+        "p95": 0.3490740000415826
+      },
+      "rerank": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "total": {
+        "p50": 160.66135150003902,
+        "p95": 178.73549999990246
+      }
+    }
+  },
+  "references": [
+    {
+      "name": "structural-512 | dense:BAAI/bge-base-en-v1.5",
+      "key": {
+        "cap": 512,
+        "chunker": "structural",
+        "spec": {
+          "lexical": null,
+          "dense_model": "BAAI/bge-base-en-v1.5",
+          "rrf_k": null,
+          "rerank": false
+        }
+      },
+      "means": {
+        "recall@5": 0.6636363636363636,
+        "mrr@5": 0.6492424242424243,
+        "ndcg@5": 0.5004802176683794,
+        "recall@10": 0.712121212121212,
+        "mrr@10": 0.6492424242424243,
+        "ndcg@10": 0.5452645696842983,
+        "recall@tokens=3072": 0.7674242424242425,
+        "recall@tokens=1536": 0.6772727272727272,
+        "recall@tokens=6144": 0.8439393939393939,
+        "tokcov@tokens=3072": 0.6245996600923281,
+        "tokcov@tokens=1536": 0.49275764727772686,
+        "tokcov@tokens=6144": 0.7471082829746867
+      },
+      "per_query": {
+        "q001": {
+          "recall@5": 0.5,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.46927872602275644,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.617319681505689,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.8935643564356436,
+          "tokcov@tokens=1536": 0.8935643564356436,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q003": {
+          "recall@5": 0.6666666666666666,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.6131471927654584,
+          "recall@10": 0.6666666666666666,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.6131471927654584,
+          "recall@tokens=3072": 0.6666666666666666,
+          "recall@tokens=1536": 0.6666666666666666,
+          "recall@tokens=6144": 0.6666666666666666,
+          "tokcov@tokens=3072": 0.5238095238095238,
+          "tokcov@tokens=1536": 0.5238095238095238,
+          "tokcov@tokens=6144": 0.5238095238095238
+        },
+        "q011": {
+          "recall@5": 0.16666666666666666,
+          "mrr@5": 0.3333333333333333,
+          "ndcg@5": 0.3156484524795145,
+          "recall@10": 0.3333333333333333,
+          "mrr@10": 0.3333333333333333,
+          "ndcg@10": 0.3347092591719316,
+          "recall@tokens=3072": 0.4166666666666667,
+          "recall@tokens=1536": 0.16666666666666666,
+          "recall@tokens=6144": 0.5,
+          "tokcov@tokens=3072": 0.27901701323251415,
+          "tokcov@tokens=1536": 0.06427221172022685,
+          "tokcov@tokens=6144": 0.37882797731568996
+        },
+        "q012": {
+          "recall@5": 1.0,
+          "mrr@5": 0.5,
+          "ndcg@5": 0.38685280723454163,
+          "recall@10": 1.0,
+          "mrr@10": 0.5,
+          "ndcg@10": 0.38685280723454163,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.16202945990180032,
+          "tokcov@tokens=1536": 0.16202945990180032,
+          "tokcov@tokens=6144": 0.16202945990180032
+        },
+        "q019": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 1.0,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 1.0,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q025": {
+          "recall@5": 0.6666666666666666,
+          "mrr@5": 0.25,
+          "ndcg@5": 0.3191471544989227,
+          "recall@10": 0.6666666666666666,
+          "mrr@10": 0.25,
+          "ndcg@10": 0.3191471544989227,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 0.6666666666666666,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.8386308068459658,
+          "tokcov@tokens=1536": 0.5289323553382234,
+          "tokcov@tokens=6144": 0.9983700081499592
+        },
+        "q027": {
+          "recall@5": 0.0,
+          "mrr@5": 0.0,
+          "ndcg@5": 0.0,
+          "recall@10": 0.0,
+          "mrr@10": 0.0,
+          "ndcg@10": 0.0,
+          "recall@tokens=3072": 0.0,
+          "recall@tokens=1536": 0.0,
+          "recall@tokens=6144": 0.0,
+          "tokcov@tokens=3072": 0.0,
+          "tokcov@tokens=1536": 0.0,
+          "tokcov@tokens=6144": 0.0
+        },
+        "q032": {
+          "recall@5": 0.0,
+          "mrr@5": 0.0,
+          "ndcg@5": 0.0,
+          "recall@10": 0.0,
+          "mrr@10": 0.0,
+          "ndcg@10": 0.0,
+          "recall@tokens=3072": 0.0,
+          "recall@tokens=1536": 0.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.0,
+          "tokcov@tokens=1536": 0.0,
+          "tokcov@tokens=6144": 0.9929712460063898
+        },
+        "q035": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.9197207891481876,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.9197207891481876,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q036": {
+          "recall@5": 0.2,
+          "mrr@5": 0.2,
+          "ndcg@5": 0.13120507751234178,
+          "recall@10": 0.6,
+          "mrr@10": 0.2,
+          "ndcg@10": 0.2329726085570736,
+          "recall@tokens=3072": 0.4,
+          "recall@tokens=1536": 0.0,
+          "recall@tokens=6144": 0.6,
+          "tokcov@tokens=3072": 0.20779610194902548,
+          "tokcov@tokens=1536": 0.0,
+          "tokcov@tokens=6144": 0.46836581709145425
+        },
+        "q038": {
+          "recall@5": 1.0,
+          "mrr@5": 0.5,
+          "ndcg@5": 0.2960819109658652,
+          "recall@10": 1.0,
+          "mrr@10": 0.5,
+          "ndcg@10": 0.4632423659320675,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.5363550519357885,
+          "tokcov@tokens=1536": 0.4683663833805477,
+          "tokcov@tokens=6144": 0.5363550519357885
+        },
+        "q040": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 1.0,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 1.0,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.9867768595041322,
+          "tokcov@tokens=1536": 0.7399449035812672,
+          "tokcov@tokens=6144": 0.9867768595041322
+        },
+        "q042": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.48522855511632257,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.5873259502392342,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.5362865221489161,
+          "tokcov@tokens=1536": 0.38407163053722904,
+          "tokcov@tokens=6144": 0.7591894439208294
+        },
+        "q044": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.5531464700081437,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.7932723085919884,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.6453362255965293,
+          "tokcov@tokens=1536": 0.30441070137382503,
+          "tokcov@tokens=6144": 0.987707881417209
+        },
+        "q047": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 1.0,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 1.0,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q052": {
+          "recall@5": 0.0,
+          "mrr@5": 0.0,
+          "ndcg@5": 0.0,
+          "recall@10": 0.0,
+          "mrr@10": 0.0,
+          "ndcg@10": 0.0,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 0.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 0.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q057": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.9197207891481876,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.9197207891481876,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q058": {
+          "recall@5": 0.0,
+          "mrr@5": 0.0,
+          "ndcg@5": 0.0,
+          "recall@10": 0.0,
+          "mrr@10": 0.0,
+          "ndcg@10": 0.0,
+          "recall@tokens=3072": 0.0,
+          "recall@tokens=1536": 0.0,
+          "recall@tokens=6144": 0.0,
+          "tokcov@tokens=3072": 0.0,
+          "tokcov@tokens=1536": 0.0,
+          "tokcov@tokens=6144": 0.0
+        },
+        "q062": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.48522855511632257,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.6922313175734981,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.6051282051282051,
+          "tokcov@tokens=1536": 0.24480431848852902,
+          "tokcov@tokens=6144": 0.8750337381916329
+        },
+        "q068": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 1.0,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 1.0,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q072": {
+          "recall@5": 0.4,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.48522855511632257,
+          "recall@10": 0.4,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.48522855511632257,
+          "recall@tokens=3072": 0.4,
+          "recall@tokens=1536": 0.4,
+          "recall@tokens=6144": 0.8,
+          "tokcov@tokens=3072": 0.5264623955431755,
+          "tokcov@tokens=1536": 0.5264623955431755,
+          "tokcov@tokens=6144": 0.7669452181987001
+        },
+        "q077": {
+          "recall@5": 1.0,
+          "mrr@5": 0.5,
+          "ndcg@5": 0.6309297535714575,
+          "recall@10": 1.0,
+          "mrr@10": 0.5,
+          "ndcg@10": 0.6309297535714575,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        }
+      },
+      "latency": {
+        "lexical": {
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "dense": {
+          "p50": 157.8473634999682,
+          "p95": 186.49869099999705
+        },
+        "fusion": {
+          "p50": 0.003141999968647724,
+          "p95": 0.003970999841840239
+        },
+        "rerank": {
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "total": {
+          "p50": 157.85584999991897,
+          "p95": 186.5088189999824
+        }
+      }
+    },
+    {
+      "name": "structural-512 | bm25-code",
+      "key": {
+        "cap": 512,
+        "chunker": "structural",
+        "spec": {
+          "lexical": "code",
+          "dense_model": null,
+          "rrf_k": null,
+          "rerank": false
+        }
+      },
+      "means": {
+        "recall@5": 0.7454545454545454,
+        "mrr@5": 0.6,
+        "ndcg@5": 0.5137092441794754,
+        "recall@10": 0.8151515151515152,
+        "mrr@10": 0.612987012987013,
+        "ndcg@10": 0.5477597360463906,
+        "recall@tokens=3072": 0.7696969696969697,
+        "recall@tokens=1536": 0.7454545454545454,
+        "recall@tokens=6144": 0.8454545454545456,
+        "tokcov@tokens=3072": 0.6173102211339491,
+        "tokcov@tokens=1536": 0.5549708157630886,
+        "tokcov@tokens=6144": 0.7439597327304172
+      },
+      "per_query": {
+        "q001": {
+          "recall@5": 1.0,
+          "mrr@5": 0.3333333333333333,
+          "ndcg@5": 0.4367467095119258,
+          "recall@10": 1.0,
+          "mrr@10": 0.3333333333333333,
+          "ndcg@10": 0.4367467095119258,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.8935643564356436,
+          "tokcov@tokens=1536": 0.8935643564356436,
+          "tokcov@tokens=6144": 0.8935643564356436
+        },
+        "q003": {
+          "recall@5": 0.6666666666666666,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.6131471927654584,
+          "recall@10": 0.6666666666666666,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.6131471927654584,
+          "recall@tokens=3072": 0.6666666666666666,
+          "recall@tokens=1536": 0.6666666666666666,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.5238095238095238,
+          "tokcov@tokens=1536": 0.5238095238095238,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q011": {
+          "recall@5": 0.0,
+          "mrr@5": 0.0,
+          "ndcg@5": 0.0,
+          "recall@10": 0.0,
+          "mrr@10": 0.0,
+          "ndcg@10": 0.0,
+          "recall@tokens=3072": 0.0,
+          "recall@tokens=1536": 0.0,
+          "recall@tokens=6144": 0.0,
+          "tokcov@tokens=3072": 0.0,
+          "tokcov@tokens=1536": 0.0,
+          "tokcov@tokens=6144": 0.0
+        },
+        "q012": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.6131471927654584,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.6131471927654584,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.16202945990180032,
+          "tokcov@tokens=1536": 0.16202945990180032,
+          "tokcov@tokens=6144": 0.16202945990180032
+        },
+        "q019": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 1.0,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 1.0,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q025": {
+          "recall@5": 0.3333333333333333,
+          "mrr@5": 0.2,
+          "ndcg@5": 0.15101961822780524,
+          "recall@10": 0.6666666666666666,
+          "mrr@10": 0.2,
+          "ndcg@10": 0.2685357229842324,
+          "recall@tokens=3072": 0.6666666666666666,
+          "recall@tokens=1536": 0.3333333333333333,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.5289323553382234,
+          "tokcov@tokens=1536": 0.15403422982885084,
+          "tokcov@tokens=6144": 0.8386308068459658
+        },
+        "q027": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.8503449055347546,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.8503449055347546,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q032": {
+          "recall@5": 0.0,
+          "mrr@5": 0.0,
+          "ndcg@5": 0.0,
+          "recall@10": 1.0,
+          "mrr@10": 0.14285714285714285,
+          "ndcg@10": 0.20438239758848611,
+          "recall@tokens=3072": 0.0,
+          "recall@tokens=1536": 0.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.0,
+          "tokcov@tokens=1536": 0.0,
+          "tokcov@tokens=6144": 0.9929712460063898
+        },
+        "q035": {
+          "recall@5": 1.0,
+          "mrr@5": 0.3333333333333333,
+          "ndcg@5": 0.5706417189553201,
+          "recall@10": 1.0,
+          "mrr@10": 0.3333333333333333,
+          "ndcg@10": 0.5706417189553201,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q036": {
+          "recall@5": 0.0,
+          "mrr@5": 0.0,
+          "ndcg@5": 0.0,
+          "recall@10": 0.2,
+          "mrr@10": 0.14285714285714285,
+          "ndcg@10": 0.07336392209936005,
+          "recall@tokens=3072": 0.2,
+          "recall@tokens=1536": 0.0,
+          "recall@tokens=6144": 0.2,
+          "tokcov@tokens=3072": 0.05787106446776612,
+          "tokcov@tokens=1536": 0.0,
+          "tokcov@tokens=6144": 0.05787106446776612
+        },
+        "q038": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.46927872602275644,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.46927872602275644,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.4683663833805477,
+          "tokcov@tokens=1536": 0.4683663833805477,
+          "tokcov@tokens=6144": 0.4683663833805477
+        },
+        "q040": {
+          "recall@5": 1.0,
+          "mrr@5": 0.5,
+          "ndcg@5": 0.21398626473452756,
+          "recall@10": 1.0,
+          "mrr@10": 0.5,
+          "ndcg@10": 0.32703966649239957,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.4578512396694215,
+          "tokcov@tokens=1536": 0.27548209366391185,
+          "tokcov@tokens=6144": 0.9867768595041322
+        },
+        "q042": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.6992148198508501,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.7972541056822071,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.5362865221489161,
+          "tokcov@tokens=1536": 0.5362865221489161,
+          "tokcov@tokens=6144": 0.7591894439208294
+        },
+        "q044": {
+          "recall@5": 1.0,
+          "mrr@5": 0.5,
+          "ndcg@5": 0.38356636737133565,
+          "recall@10": 1.0,
+          "mrr@10": 0.5,
+          "ndcg@10": 0.6463391317085908,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.8062183658712943,
+          "tokcov@tokens=1536": 0.30441070137382503,
+          "tokcov@tokens=6144": 0.8062183658712943
+        },
+        "q047": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 1.0,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 1.0,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q052": {
+          "recall@5": 1.0,
+          "mrr@5": 0.5,
+          "ndcg@5": 0.6309297535714575,
+          "recall@10": 1.0,
+          "mrr@10": 0.5,
+          "ndcg@10": 0.6309297535714575,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q057": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 1.0,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 1.0,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q058": {
+          "recall@5": 0.0,
+          "mrr@5": 0.0,
+          "ndcg@5": 0.0,
+          "recall@10": 0.0,
+          "mrr@10": 0.0,
+          "ndcg@10": 0.0,
+          "recall@tokens=3072": 0.0,
+          "recall@tokens=1536": 0.0,
+          "recall@tokens=6144": 0.0,
+          "tokcov@tokens=3072": 0.0,
+          "tokcov@tokens=1536": 0.0,
+          "tokcov@tokens=6144": 0.0
+        },
+        "q062": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 0.7860137352654724,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 0.6659966799668502,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 0.6194331983805668,
+          "tokcov@tokens=1536": 0.3649122807017544,
+          "tokcov@tokens=6144": 0.8750337381916329
+        },
+        "q068": {
+          "recall@5": 1.0,
+          "mrr@5": 1.0,
+          "ndcg@5": 1.0,
+          "recall@10": 1.0,
+          "mrr@10": 1.0,
+          "ndcg@10": 1.0,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        },
+        "q072": {
+          "recall@5": 0.4,
+          "mrr@5": 0.5,
+          "ndcg@5": 0.38356636737133565,
+          "recall@10": 0.4,
+          "mrr@10": 0.5,
+          "ndcg@10": 0.38356636737133565,
+          "recall@tokens=3072": 0.4,
+          "recall@tokens=1536": 0.4,
+          "recall@tokens=6144": 0.4,
+          "tokcov@tokens=3072": 0.5264623955431755,
+          "tokcov@tokens=1536": 0.5264623955431755,
+          "tokcov@tokens=6144": 0.5264623955431755
+        },
+        "q077": {
+          "recall@5": 1.0,
+          "mrr@5": 0.3333333333333333,
+          "ndcg@5": 0.5,
+          "recall@10": 1.0,
+          "mrr@10": 0.3333333333333333,
+          "ndcg@10": 0.5,
+          "recall@tokens=3072": 1.0,
+          "recall@tokens=1536": 1.0,
+          "recall@tokens=6144": 1.0,
+          "tokcov@tokens=3072": 1.0,
+          "tokcov@tokens=1536": 1.0,
+          "tokcov@tokens=6144": 1.0
+        }
+      },
+      "latency": {
+        "lexical": {
+          "p50": 0.42002049997336144,
+          "p95": 0.5793780001113191
+        },
+        "dense": {
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fusion": {
+          "p50": 0.0010464999604664627,
+          "p95": 0.0014359998203872237
+        },
+        "rerank": {
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "total": {
+          "p50": 0.42328649999490153,
+          "p95": 0.5829659999108117
+        }
+      }
+    }
+  ],
+  "comparisons": [
+    {
+      "stage": "test (report only)",
+      "candidate": "structural-512 | bm25-code + dense:BAAI/bge-base-en-v1.5 + rrf10",
+      "baseline": "structural-512 | dense:BAAI/bge-base-en-v1.5",
+      "metric": "recall@10",
+      "free": true,
+      "ci": {
+        "n": 22,
+        "mean": 0.11969696969696969,
+        "low": -0.016666666666666663,
+        "high": 0.2727272727272727,
+        "resamples": 10000,
+        "seed": 20261029
+      },
+      "decision": {
+        "adopt": true,
+        "reason": "free, the interval includes 0 and the mean is not negative"
+      },
+      "gate": null,
+      "report_only": true
+    },
+    {
+      "stage": "test (report only)",
+      "candidate": "structural-512 | bm25-code + dense:BAAI/bge-base-en-v1.5 + rrf10",
+      "baseline": "structural-512 | bm25-code",
+      "metric": "recall@10",
+      "free": true,
+      "ci": {
+        "n": 22,
+        "mean": 0.016666666666666666,
+        "low": 0.0,
+        "high": 0.04242424242424242,
+        "resamples": 10000,
+        "seed": 20261029
+      },
+      "decision": {
+        "adopt": true,
+        "reason": "free, the interval includes 0 and the mean is not negative"
+      },
+      "gate": null,
+      "report_only": true
+    }
+  ]
+}
