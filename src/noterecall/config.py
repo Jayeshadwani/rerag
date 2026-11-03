@@ -131,11 +131,8 @@ class LlmConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     provider: Literal["openai"]
-    blurb_model: str
-    clean_model: str
+    model: str
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
-    max_output_tokens_blurb: int = Field(ge=1)
-    max_output_tokens_clean: int = Field(ge=1)
     timeout_s: float = Field(gt=0)
     max_retries: int = Field(ge=0)
     concurrency: int = Field(ge=1)
@@ -145,9 +142,8 @@ class LlmConfig(BaseModel):
 
     @model_validator(mode="after")
     def _every_model_has_a_price(self) -> Self:
-        for model in {self.blurb_model, self.clean_model}:
-            if model not in self.prices:
-                raise ValueError(f"no [llm.prices] entry for model {model!r}")
+        if self.model not in self.prices:
+            raise ValueError(f"no [llm.prices] entry for model {self.model!r}")
         return self
 
 

@@ -34,12 +34,8 @@ def chunk_header(chunk: Chunk) -> str:
     return " > ".join(p for p in parts if p)
 
 
-def index_text(chunk: Chunk, header: bool, blurb: str | None) -> str:
-    """The text that is indexed for a chunk: header, blurb, then the chunk text."""
-    parts = []
-    if header:
-        parts.append(chunk_header(chunk))
-    if blurb:
-        parts.append(blurb)
-    parts.append(chunk.text)
-    return "\n\n".join(parts)
+def index_text(chunk: Chunk, header: bool) -> str:
+    """The text that is indexed for a chunk: the header (if on), then the chunk text."""
+    if not header:
+        return chunk.text
+    return f"{chunk_header(chunk)}\n\n{chunk.text}"

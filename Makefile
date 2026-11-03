@@ -3,7 +3,7 @@
 
 UV := uv run --locked
 
-.PHONY: setup check lint types test banned sync eval eval-test results mutation
+.PHONY: setup check lint types test banned sync eval eval-header eval-test results mutation
 
 setup:
 	uv sync --locked
@@ -26,10 +26,14 @@ banned:
 sync:
 	$(UV) noterecall sync
 
-MILESTONE ?= M4
+MILESTONE ?= M5
 
 eval:
 	$(UV) noterecall eval --split dev
+
+# M5: the header on/off row on dev (the M4 decisions are the base).
+eval-header:
+	$(UV) noterecall eval --split dev --suite header
 
 # Runs the test split ONCE per milestone (the ledger in results/test_ledger.json refuses a repeat).
 eval-test:

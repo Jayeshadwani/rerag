@@ -21,7 +21,7 @@ from noterecall.llm.client import (
 from noterecall.llm.cost import CostMeter, cost_usd, ledger_cost
 from noterecall.llm.fake import FakeTransport, Responder, count_words
 from noterecall.llm.openai_client import OpenAITransport, create_transport, scrub, strict_schema
-from noterecall.llm.prompts import PROMPT_DIR, PromptFileError, load_prompt
+from noterecall.llm.prompts import PromptFileError, load_prompt
 from noterecall.llm.transport import CachingClient
 
 PRICE = PriceConfig(input=0.25, cached_input=0.025, output=2.0)
@@ -49,20 +49,26 @@ def prompt(**changes: object) -> Prompt:
 # ------------------------------------------------------------------------------------ prompts
 
 
-def test_real_prompt_files_load_with_a_content_hash_version() -> None:
-    blurb = load_prompt("contextual_blurb")
-    raw = (PROMPT_DIR / "contextual_blurb.md").read_bytes()
-    assert blurb.version == hashlib.sha256(raw).hexdigest()[:12]
-    rendered = blurb.render("m", 50, notebook="NB-TEXT", chunk="CHUNK-TEXT")
-    assert "NB-TEXT" in rendered.shared
-    assert "CHUNK-TEXT" in rendered.variable
-    assert "NB-TEXT" not in rendered.variable
-    assert "CHUNK-TEXT" not in rendered.shared
+def test_a_prompt_file_loads_with_a_content_hash_version_and_fills_its_placeholders(
+    tmp_path: Path,
+) -> None:
+    text = (
+        "# demo\n\n## instructions\nYou are brief.\n\n## shared\n<doc>\n{{doc}}\n</doc>\n\n"
+        "## variable\n<q>\n{{question}}\n</q>\n"
+    )
+    (tmp_path / "demo.md").write_text(text, encoding="utf-8")
+    template = load_prompt("demo", tmp_path)
+    assert template.version == hashlib.sha256(text.encode()).hexdigest()[:12]
+    rendered = template.render("m", 50, doc="DOC-TEXT", question="QUESTION-TEXT")
+    assert "DOC-TEXT" in rendered.shared
+    assert "QUESTION-TEXT" in rendered.variable
+    assert "DOC-TEXT" not in rendered.variable
+    assert "QUESTION-TEXT" not in rendered.shared
     assert "{{" not in rendered.instructions + rendered.shared + rendered.variable
-    assert rendered.instructions.startswith("You help a search index")
-    clean = load_prompt("clean_markdown").render("m", 50, cell="CELL-TEXT")
-    assert clean.shared == ""
-    assert "CELL-TEXT" in clean.variable
+    assert rendered.instructions == "You are brief."
+    only_tail = tmp_path / "tail.md"
+    only_tail.write_text("## instructions\ni\n\n## variable\n{{question}}\n", encoding="utf-8")
+    assert load_prompt("tail", tmp_path).render("m", 5, question="Q").shared == ""
 
 
 def test_editing_a_prompt_changes_its_version(tmp_path: Path) -> None:

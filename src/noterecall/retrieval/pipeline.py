@@ -43,15 +43,12 @@ class PipelineSpec(BaseModel):
 
 
 class Variant(BaseModel):
-    """What the indexed text is made of (ADR-007, ADR-003): a context header in front of each
-    chunk, an LLM blurb in front of it, and whether markdown cells were cleaned by the LLM first.
-    All off is the M4 pipeline."""
+    """What the indexed text is made of (ADR-007): with `header`, the deterministic context
+    header is put in front of each chunk. Off is the M4 pipeline."""
 
     model_config = ConfigDict(frozen=True)
 
     header: bool = False
-    blurb: bool = False
-    clean: bool = False
 
 
 class Depths(BaseModel):

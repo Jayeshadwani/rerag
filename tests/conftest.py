@@ -89,11 +89,8 @@ candidate_caps = [64, 128]
 
 [llm]
 provider = "openai"
-blurb_model = "test-model"
-clean_model = "test-model"
+model = "test-model"
 reasoning_effort = "minimal"
-max_output_tokens_blurb = 50
-max_output_tokens_clean = 200
 timeout_s = 5.0
 max_retries = 2
 concurrency = 2

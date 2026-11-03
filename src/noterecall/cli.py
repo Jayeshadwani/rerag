@@ -18,17 +18,7 @@ import typer
 
 from noterecall.chunking.report import compute_chunk_stats
 from noterecall.chunking.tokens import TokenizerError, load_tokenizer
-from noterecall.config import ConfigError, Settings, load_settings
-from noterecall.enrich.contextual import MissingEnrichmentError
-from noterecall.enrich.lookup import CachedBlurbs
-from noterecall.enrich.steps import (
-    EnrichError,
-    blurb_setup,
-    cleaned_notebooks,
-    describe_or_run,
-    plan_blurbs,
-    plan_clean,
-)
+from noterecall.config import ConfigError, DecidedConfig, Settings, load_settings
 from noterecall.eval.gold import (
     CellRef,
     GoldError,
@@ -53,17 +43,9 @@ from noterecall.eval.ledger import (
     read_ledger,
     record_run,
 )
-from noterecall.eval.run_enrichment import (
-    EnrichmentDevResults,
-    Extras,
-    llm_summary,
-    run_enrichment_dev,
-    run_enrichment_test,
-)
+from noterecall.eval.run_header import HeaderDevResults, run_header_dev
 from noterecall.eval.run_retrieval import (
     DevResults,
-    Enrichment,
-    Notebooks,
     Resources,
     RunContext,
     RunError,
@@ -75,7 +57,6 @@ from noterecall.index.st_models import load_cross_encoder, load_embedder
 from noterecall.index.store import StoreError, connect, notebook_cells
 from noterecall.ingest.clean import RulesError, load_rules
 from noterecall.ingest.ipynb import IpynbLoader, NotebookParseError
-from noterecall.ingest.llm_clean import CleanReport
 from noterecall.ingest.stats import (
     Provenance,
     StatsError,
@@ -92,16 +73,10 @@ from noterecall.ingest.sync import (
 from noterecall.ingest.sync import (
     sync as run_sync,
 )
-from noterecall.llm.cache import ResponseCache
-from noterecall.llm.client import LLMError
-from noterecall.llm.prompts import load_prompt
 from noterecall.retrieval.pipeline import Depths
 
 KNOWN_ERRORS = (
     ConfigError,
-    EnrichError,
-    LLMError,
-    MissingEnrichmentError,
     GoldError,
     LedgerError,
     RunError,
@@ -114,10 +89,6 @@ KNOWN_ERRORS = (
 )
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="NoteRecall command line.")
-enrich_app = typer.Typer(
-    no_args_is_help=True, help="LLM enrichment steps. They cost money: read --dry-run first."
-)
-app.add_typer(enrich_app, name="enrich")
 
 ConfigOption = Annotated[
     Path | None,
@@ -455,7 +426,6 @@ def _resources(
     settings: Settings,
     conn: sqlite3.Connection,
     models: set[str] | None = None,
-    enrichment: Enrichment | None = None,
 ) -> Resources:
     """Corpus, embedding services (cached in the database) and the reranker, all pinned."""
     notebooks = list(notebook_cells(conn))
@@ -471,12 +441,7 @@ def _resources(
     )
     reranker = load_cross_encoder(settings.rerank.model)
     return Resources(
-        notebooks,
-        load_tokenizer(settings.tokenizer.encoding),
-        services,
-        reranker,
-        depths,
-        enrichment=enrichment,
+        notebooks, load_tokenizer(settings.tokenizer.encoding), services, reranker, depths
     )
 
 
@@ -512,8 +477,22 @@ def _check_matches_dev(settings: Settings) -> None:
         dev = DevResults.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise RunError(f"cannot read the dev results at {path}: {exc}") from exc
-    if dev.decided != decided:
+    m4 = decided.model_copy(update={"variant": dev.decided.variant})
+    if dev.decided != m4:
         raise RunError("[retrieval.decided] differs from the decisions in the dev results file")
+    if decided.variant.header:
+        _check_matches_header_dev(settings, decided)
+
+
+def _check_matches_header_dev(settings: Settings, decided: DecidedConfig) -> None:
+    """With the header on, the header dev results must exist and name the same decisions."""
+    path = settings.paths.results_dir / "header_ablation_dev.json"
+    try:
+        dev = HeaderDevResults.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RunError(f"cannot read the header dev results at {path}: {exc}") from exc
+    if dev.decided != decided:
+        raise RunError("[retrieval.decided] differs from the decisions in the header dev results")
 
 
 def _eval_test(settings: Settings, milestone: str, out: Path | None) -> str:
@@ -552,102 +531,28 @@ class Suite(StrEnum):
     """Which evaluation `noterecall eval` runs."""
 
     RETRIEVAL = "retrieval"
-    ENRICHMENT = "enrichment"
+    HEADER = "header"
 
 
-def _enrichment(
-    settings: Settings, conn: sqlite3.Connection, cache: ResponseCache, need_clean: bool
-) -> tuple[Enrichment, CleanReport | None]:
-    """Cleaned notebooks (if needed) and a blurb source, both read back from the cache."""
-    notebooks = list(notebook_cells(conn))
-    cleaned = report = None
-    if need_clean:
-        cleaned, report = cleaned_notebooks(settings, notebooks, cache)
-    blurbs = CachedBlurbs(
-        cache, blurb_setup(settings), dict(notebooks), dict(cleaned) if cleaned else None
-    )
-    return Enrichment(cleaned=cleaned, blurbs=blurbs), report
-
-
-def _prompt_versions() -> dict[str, str]:
-    return {n: load_prompt(n).version for n in ("contextual_blurb", "clean_markdown")}
-
-
-def _eval_enrichment_dev(settings: Settings, out: Path | None) -> str:
-    gold = load_gold(settings.paths.gold_path)
-    conn = connect(settings.paths.db_path)
-    cache = ResponseCache(settings.llm.cache_path)
-    try:
-        enrichment, report = _enrichment(settings, conn, cache, need_clean=True)
-        extras = Extras(
-            llm=llm_summary(cache, settings.llm.prices, settings.llm.max_usd),
-            clean=report,
-            prompt_versions=_prompt_versions(),
-        )
-        results = run_enrichment_dev(
-            settings,
-            gold,
-            _resources(settings, conn, enrichment=enrichment),
-            RunContext(git=git_state(), versions=_versions()),
-            extras,
-        )
-    finally:
-        cache.close()
-        conn.close()
-    target = out if out is not None else settings.paths.results_dir / "enrichment_ablation_dev.json"
-    _write_json(target, results.model_dump_json(indent=2))
-    return f"eval: wrote {target}"
-
-
-def _check_matches_enrichment_dev(settings: Settings) -> None:
+def _eval_header_dev(settings: Settings, out: Path | None) -> str:
     decided = settings.retrieval.decided
     if decided is None:
-        raise RunError("config has no [retrieval.decided]; commit the dev decisions first")
-    path = settings.paths.results_dir / "enrichment_ablation_dev.json"
-    try:
-        dev = EnrichmentDevResults.model_validate_json(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise RunError(f"cannot read the enrichment dev results at {path}: {exc}") from exc
-    if dev.decided != decided:
-        raise RunError(
-            "[retrieval.decided] differs from the decisions in the enrichment dev results"
-        )
-
-
-def _eval_enrichment_test(settings: Settings, milestone: str, out: Path | None) -> str:
+        raise RunError("config has no [retrieval.decided]; the M4 decisions are the base of M5")
     gold = load_gold(settings.paths.gold_path)
-    git = git_state()
-    ledger_path = settings.paths.results_dir / "test_ledger.json"
-    check_test_allowed(read_ledger(ledger_path), milestone, git.dirty, gold.frozen)
-    _check_matches_enrichment_dev(settings)
-    decided = settings.retrieval.decided
-    if decided is None or decided.pipeline.dense_model is None:
-        raise RunError("the decided pipeline has no dense model to evaluate")
     conn = connect(settings.paths.db_path)
-    cache = ResponseCache(settings.llm.cache_path)
     try:
-        enrichment, _report = _enrichment(settings, conn, cache, decided.variant.clean)
-        resources = _resources(settings, conn, {decided.pipeline.dense_model}, enrichment)
-        results = run_enrichment_test(
-            settings, gold, resources, RunContext(git=git, versions=_versions())
+        models = {decided.pipeline.dense_model} if decided.pipeline.dense_model else set()
+        results = run_header_dev(
+            settings,
+            gold,
+            _resources(settings, conn, {m for m in models if m}),
+            RunContext(git=git_state(), versions=_versions()),
         )
     finally:
-        cache.close()
         conn.close()
-    target = (
-        out if out is not None else settings.paths.results_dir / f"enrichment_test_{milestone}.json"
-    )
+    target = out if out is not None else settings.paths.results_dir / "header_ablation_dev.json"
     _write_json(target, results.model_dump_json(indent=2))
-    record_run(
-        ledger_path,
-        LedgerEntry(
-            milestone=milestone,
-            git_sha=git.sha,
-            results_file=target.name,
-            results_sha256=file_sha256(target),
-        ),
-    )
-    return f"eval: wrote {target} and recorded the test run for {milestone}"
+    return f"eval: wrote {target}"
 
 
 @app.command("eval")
@@ -661,89 +566,25 @@ def eval_command(
     ] = None,
     out: Annotated[Path | None, typer.Option("--out", help="Output JSON path.")] = None,
     suite: Annotated[
-        Suite, typer.Option("--suite", help="retrieval (M4) or enrichment (M5).")
+        Suite, typer.Option("--suite", help="retrieval (M4) or header (M5, dev only).")
     ] = Suite.RETRIEVAL,
 ) -> None:
     """Run the ablation on dev, or the decided configuration once on test."""
     try:
         settings = _settings(config)
-        enriched = suite is Suite.ENRICHMENT
+        if suite is Suite.HEADER and split is Split.TEST:
+            raise RunError("the header row is a dev report; use --suite retrieval for test")
         if split is Split.DEV:
             typer.echo(
-                _eval_enrichment_dev(settings, out) if enriched else _eval_dev(settings, out)
+                _eval_header_dev(settings, out)
+                if suite is Suite.HEADER
+                else _eval_dev(settings, out)
             )
         else:
             if milestone is None:
                 raise RunError(
                     "--split test needs --milestone (the test split runs once per milestone)"
                 )
-            run = _eval_enrichment_test if enriched else _eval_test
-            typer.echo(run(settings, milestone, out))
-    except KNOWN_ERRORS as exc:
-        raise _fail(exc) from exc
-
-
-DryRunOption = Annotated[
-    bool, typer.Option("--dry-run", help="Print the estimate and stop; no API call.")
-]
-YesOption = Annotated[
-    bool, typer.Option("--yes", help="Confirm that the estimate is accepted; makes real API calls.")
-]
-
-
-def _enrich_blurbs(settings: Settings, cleaned: bool, dry_run: bool, yes: bool) -> str:
-    conn = connect(settings.paths.db_path)
-    cache = ResponseCache(settings.llm.cache_path)
-    try:
-        corpus: Notebooks = list(notebook_cells(conn))
-        if not corpus:
-            raise RunError("the database has no notebooks; run `noterecall sync` first")
-        if cleaned:
-            corpus, _report = cleaned_notebooks(settings, corpus, cache)
-        tokenizer = load_tokenizer(settings.tokenizer.encoding)
-        plan = plan_blurbs(settings, corpus, cache, tokenizer)
-        return describe_or_run(plan, settings, cache, dry_run=dry_run, confirmed=yes)
-    finally:
-        cache.close()
-        conn.close()
-
-
-def _enrich_clean(settings: Settings, dry_run: bool, yes: bool) -> str:
-    conn = connect(settings.paths.db_path)
-    cache = ResponseCache(settings.llm.cache_path)
-    try:
-        corpus = list(notebook_cells(conn))
-        if not corpus:
-            raise RunError("the database has no notebooks; run `noterecall sync` first")
-        plan = plan_clean(settings, corpus, cache)
-        return describe_or_run(plan, settings, cache, dry_run=dry_run, confirmed=yes)
-    finally:
-        cache.close()
-        conn.close()
-
-
-@enrich_app.command("blurbs")
-def enrich_blurbs(
-    config: ConfigOption = None,
-    cleaned: Annotated[
-        bool, typer.Option("--cleaned", help="Blurbs for the LLM-cleaned notebooks.")
-    ] = False,
-    dry_run: DryRunOption = False,
-    yes: YesOption = False,
-) -> None:
-    """Write a contextual blurb for every chunk (ADR-007). Estimate first; --yes to run."""
-    try:
-        typer.echo(_enrich_blurbs(_settings(config), cleaned, dry_run, yes))
-    except KNOWN_ERRORS as exc:
-        raise _fail(exc) from exc
-
-
-@enrich_app.command("clean")
-def enrich_clean(
-    config: ConfigOption = None, dry_run: DryRunOption = False, yes: YesOption = False
-) -> None:
-    """Clean every markdown cell with the LLM (ADR-003). Estimate first; --yes to run."""
-    try:
-        typer.echo(_enrich_clean(_settings(config), dry_run, yes))
+            typer.echo(_eval_test(settings, milestone, out))
     except KNOWN_ERRORS as exc:
         raise _fail(exc) from exc

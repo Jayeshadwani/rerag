@@ -168,8 +168,8 @@ def describe(key: RunKey) -> str:
         parts.append(f"rrf{spec.rrf_k}")
     if spec.rerank:
         parts.append("rerank")
-    enrichments = "".join(f" +{f}" for f in ("header", "blurb", "clean") if getattr(key.variant, f))
-    return f"{key.chunker}-{key.cap} | {' + '.join(parts)}{enrichments}"
+    header = " +header" if key.variant.header else ""
+    return f"{key.chunker}-{key.cap} | {' + '.join(parts)}{header}"
 
 
 class Rule(BaseModel):

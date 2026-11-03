@@ -10,8 +10,7 @@ in, so the whole runner is tested offline with the hash embedder and the overlap
 
 import os
 import platform
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
 from typing import Literal, NamedTuple
 
 import structlog
@@ -60,7 +59,6 @@ log = structlog.get_logger()
 SEED = 20261029
 KS = (5, 10)
 Notebooks = Sequence[tuple[str, list[Cell]]]
-BlurbSource = Callable[[bool, Sequence[Chunk]], Mapping[str, str]]
 
 
 class RunError(Exception):
@@ -105,74 +103,46 @@ def build_chunks(
     return chunks
 
 
-@dataclass(frozen=True)
-class Enrichment:
-    """What the M5 variants need beyond the plain notebooks: the LLM-cleaned notebooks and a
-    source of blurbs (either may be absent when the matching variant is not run)."""
-
-    cleaned: Notebooks | None = None
-    blurbs: BlurbSource | None = None
-
-
 class Resources:
     """Builds corpora, indexes and pipelines on demand and keeps them (each is expensive).
 
-    For the enrichment ablation (M5) it also holds the LLM-cleaned notebooks and a source of
-    blurbs; a variant that needs one that was not supplied is an error, never a silent fallback.
+    A run key's variant decides the text that is indexed (ADR-007): the chunk text, or the
+    deterministic header followed by it. Cited and displayed text is always the chunk's own.
     """
 
-    def __init__(  # noqa: PLR0913 - the M4 resources plus the optional M5 bundle
+    def __init__(
         self,
         notebooks: Notebooks,
         tokenizer: Tokenizer,
         services: Mapping[str, EmbeddingService],
         reranker: Reranker,
         depths: Depths,
-        *,
-        enrichment: Enrichment | None = None,
     ) -> None:
-        enrichment = enrichment or Enrichment()
         self._notebooks = notebooks
-        self._cleaned = enrichment.cleaned
-        self._blurbs = enrichment.blurbs
         self._tokenizer = tokenizer
         self.services = services
         self.reranker = reranker
         self._depths = depths
-        self._chunks: dict[tuple[int, Chunker, bool], list[Chunk]] = {}
+        self._chunks: dict[tuple[int, Chunker], list[Chunk]] = {}
         self._lexical: dict[tuple[int, Chunker, str, Variant], LexicalIndex] = {}
         self._dense: dict[tuple[int, Chunker, str, Variant], DenseIndex] = {}
-        self._coverage: dict[bool, CoverageIndex] = {}
+        self._coverage: CoverageIndex | None = None
 
-    def _corpus(self, clean: bool) -> Notebooks:
-        if not clean:
-            return self._notebooks
-        if self._cleaned is None:
-            raise RunError("the cleaned notebooks were not supplied; run `noterecall enrich clean`")
-        return self._cleaned
-
-    def chunks(self, cap: int, chunker: Chunker, clean: bool = False) -> list[Chunk]:
-        if (cap, chunker, clean) not in self._chunks:
-            self._chunks[(cap, chunker, clean)] = build_chunks(
-                self._corpus(clean), cap, chunker, self._tokenizer
+    def chunks(self, cap: int, chunker: Chunker) -> list[Chunk]:
+        if (cap, chunker) not in self._chunks:
+            self._chunks[(cap, chunker)] = build_chunks(
+                self._notebooks, cap, chunker, self._tokenizer
             )
-        return self._chunks[(cap, chunker, clean)]
+        return self._chunks[(cap, chunker)]
 
     def indexed_texts(self, key: RunKey) -> dict[str, str] | None:
         """The text each chunk is indexed under, or None for the plain chunk text."""
-        variant = key.variant
-        if not (variant.header or variant.blurb):
+        if not key.variant.header:
             return None
-        chunks = self.chunks(key.cap, key.chunker, variant.clean)
-        blurbs: Mapping[str, str] = {}
-        if variant.blurb:
-            if self._blurbs is None:
-                raise RunError("no blurb source was supplied for a blurb variant")
-            blurbs = self._blurbs(variant.clean, chunks)
-        return {c.id: index_text(c, variant.header, blurbs.get(c.id)) for c in chunks}
+        return {c.id: index_text(c, True) for c in self.chunks(key.cap, key.chunker)}
 
     def pipeline(self, key: RunKey) -> RetrievalPipeline:
-        chunks = self.chunks(key.cap, key.chunker, key.variant.clean)
+        chunks = self.chunks(key.cap, key.chunker)
         spec = key.spec
         texts = self.indexed_texts(key)
         lexical = dense = None
@@ -191,11 +161,11 @@ class Resources:
         parts = Components(lexical=lexical, dense=dense, reranker=self.reranker)
         return RetrievalPipeline(spec, {c.id: c for c in chunks}, self._depths, parts)
 
-    def coverage(self, clean: bool = False) -> CoverageIndex:
+    def coverage(self) -> CoverageIndex:
         """Token counts of every cell, for the secondary token-coverage metric."""
-        if clean not in self._coverage:
-            self._coverage[clean] = CoverageIndex(self._corpus(clean), self._tokenizer)
-        return self._coverage[clean]
+        if self._coverage is None:
+            self._coverage = CoverageIndex(self._notebooks, self._tokenizer)
+        return self._coverage
 
     def _service(self, model: str) -> EmbeddingService:
         if model not in self.services:
@@ -219,8 +189,8 @@ def make_evaluator(
 
     def evaluate(key: RunKey) -> ConfigResult:
         pipeline = resources.pipeline(key)
-        coverage = resources.coverage(key.variant.clean)
-        chunks = resources.chunks(key.cap, key.chunker, key.variant.clean)
+        coverage = resources.coverage()
+        chunks = resources.chunks(key.cap, key.chunker)
         by_id = {c.id: c for c in chunks}
         pipeline.retrieve(queries[0].text)  # warm-up: models loaded, caches filled, not timed
         per_query: dict[str, dict[str, float]] = {}
@@ -457,6 +427,15 @@ def reference_specs(pipeline: PipelineSpec) -> list[PipelineSpec]:
     return [] if pipeline == baseline else [baseline]
 
 
+def comparison_rows(decided: DecidedConfig) -> list[tuple[PipelineSpec, Variant]]:
+    """The comparison rows for the test run. With the header on, the first row is the same
+    pipeline with the header off (the M4 pipeline); then the parts of a hybrid, as in M4."""
+    rows = [(spec, decided.variant) for spec in reference_specs(decided.pipeline)]
+    if decided.variant.header:
+        rows.insert(0, (decided.pipeline, Variant()))
+    return rows
+
+
 def run_test(
     settings: Settings, gold: GoldSet, resources: Resources, context: RunContext, milestone: str
 ) -> TestResults:
@@ -472,10 +451,12 @@ def run_test(
     queries = select_queries(gold, Split.TEST)
     evaluate = make_evaluator(resources, queries, score_params(settings))
     cap = decided.chunk_cap
-    chosen = evaluate(RunKey(cap=cap, chunker="structural", spec=decided.pipeline))
+    chosen = evaluate(
+        RunKey(cap=cap, chunker="structural", spec=decided.pipeline, variant=decided.variant)
+    )
     references = tuple(
-        evaluate(RunKey(cap=cap, chunker="structural", spec=spec))
-        for spec in reference_specs(decided.pipeline)
+        evaluate(RunKey(cap=cap, chunker="structural", spec=spec, variant=ref_variant))
+        for spec, ref_variant in comparison_rows(decided)
     )
     rule = Rule(stage="test (report only)", metric="recall@10", free=True)
     comparisons = tuple(

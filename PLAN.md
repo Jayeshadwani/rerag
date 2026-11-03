@@ -116,11 +116,12 @@ LLM calls are fixed steps returning schema-validated JSON. No tool-calling loops
 ### ADR-002 — No LangChain / LlamaIndex / RAG frameworks
 Hand-written retrieval, fusion and prompting (~a few hundred lines). *Reason:* every line must be explainable in an interview, and the ablations in ADR-010 need direct control over each stage. Allowed libraries are listed in §5.
 
-### ADR-003 — Two-stage cleaning: deterministic first, LLM optional and verified (amended by proposal 001)
+### ADR-003 — Two-stage cleaning: deterministic first, LLM optional and verified (amended by proposals 001 and 005)
 - Deterministic (always on): drop image/HTML/base64 outputs; replace the payload of inline base64 data URIs in markdown cells with a placeholder, keeping the surrounding markdown (added by proposal 001); truncate text outputs to N lines; drop empty cells; remove instructor-note cells/blocks via rules in `config/cleaning_rules.yaml` (rule-based, never LLM); scrub secrets; mark exact-duplicate cells across notebooks.
 - LLM clean (optional, **markdown cells only**): fixes headings/typos. Verifier rejects output if any identifier/inline-code token from the original is missing, if length ratio leaves [0.7, 1.3], or if a code fence changed. Raw and cleaned text are both stored.
 - **Data-decided:** LLM clean is ON only if it improves dev Recall@10 under the ADR-010 rule. Otherwise it ships OFF and that negative result goes in the README.
 *Amended by proposal 001, `docs/proposals/001-inline-base64-in-markdown.md` (approved by the owner): inline base64 data URIs in markdown cells.*
+*Amended by proposal 005, `docs/proposals/005-skip-llm-preprocessing.md` (approved by the owner): the LLM clean is **not run** and ships **off**. This is an owner decision on cost and benefit, not a measured result: it is **not measured**, so the rule above was never applied.*
 
 ### ADR-004 — Structure-aware chunking on cell boundaries (amended by proposal 002)
 A chunk = a markdown heading section and its following cells, split on **cell boundaries** when over the token cap. A single oversized cell is split at its natural units (amended by proposal 002): one top-level statement is the smallest unit of code, and markdown is split at paragraphs, then sentences; a fenced code block inside a markdown cell is never split. A chunk may exceed the cap only if it is a single indivisible unit, and it is then flagged. Code and the markdown that explains it stay together. Code cells are never split mid-statement. Cell outputs are never part of chunk text; they are kept in the database (final decision, proposal 002).
@@ -140,9 +141,10 @@ A chunk = a markdown heading section and its following cells, split on **cell bo
 **Data-decided:** reranker must beat no-reranker on dev under the ADR-010 rule **and** stay within the latency budget (§6). If it fails, it ships off and that is reported.
 **Result (M4, dev, `results/retrieval_ablation_dev.json`):** rerank vs no rerank (hybrid, bge-base, k=10), Recall@10 -0.070 [-0.168, +0.024] (not adopted); p95 total latency 1,630 ms vs the 1,000 ms budget on the 4-vCPU machine of the run. The reranker ships off.
 
-### ADR-007 — Context headers: deterministic always, LLM blurb data-decided (amended by proposal 004)
+### ADR-007 — Context headers: deterministic always, LLM blurb data-decided (amended by proposals 004 and 005)
 Every chunk is indexed (both BM25 and dense) with `"{notebook title} > {H1} > {H2}"` prepended. The LLM contextual blurb (the Contextual Retrieval method, with the notebook as a shared prefix that the provider caches) is an ablation. Hypothesis to test: for well-structured notebooks the free deterministic header captures most of the gain. Either outcome is a good interview story.
 *Amended by proposal 004, `docs/proposals/004-llm-provider-openai.md` (approved by the owner): the LLM provider is OpenAI; the blurb method is provider-agnostic.*
+*Amended by proposal 005 (approved by the owner): the LLM blurb is **not run**. This is an owner decision on cost and benefit, not a measured result: it is **not measured**. The deterministic header stays on; M5 reports its on/off dev row.*
 
 ### ADR-008 — Storage: SQLite + NumPy exact search, no vector DB
 Corpus is ~53 notebooks → low thousands of chunks. Exact cosine over a few thousand vectors is a single matrix multiply (milliseconds) with perfect recall; an ANN index adds approximation error and ops cost for zero benefit. SQLite holds everything else (one file, transactional, inspectable). **Revisit trigger:** > 200k chunks or p95 dense search > 50 ms → FAISS/HNSW. Write this trigger in the README.
@@ -192,7 +194,7 @@ Every LLM call cached on `sha256(model, prompt_version, inputs)`; embeddings cac
 | **M2** Chunking | structural chunker + fixed baseline | Property tests (hypothesis): every retained cell appears in exactly one chunk; no chunk over cap unless it's one indivisible line; same input → same chunk IDs; code fence never split |
 | **M3** Gold set tooling + eval harness | `noterecall label` (search → mark relevant cells), gold schema/validator, metrics, bootstrap | Metrics tested against hand-computed cases; bootstrap tested on synthetic data with known effect. **Stop here until Jayesh finishes the gold set.** |
 | **M4** Retrieval | code tokenizer, BM25, dense (candidates), RRF, reranker, ablation runner | Ablation table in `results/retrieval_ablation_dev.json` with CIs; winner chosen per ADR-010; test split run once; CI regression test on fixture corpus with fixed thresholds |
-| **M5** Enrichment + LLM clean ablations | deterministic headers, LLM blurbs (prompt-cached), LLM markdown clean + verifier | Both ablations reported with CIs; verifier unit-tested with adversarial cases (dropped identifier, altered code fence) |
+| **M5** Enrichment + LLM clean ablations (amended by proposal 005) | deterministic headers; LLM blurbs and LLM markdown clean + verifier **not built, by owner decision** | Header on vs off reported with a CI. Blurb and LLM clean: **not measured, by owner decision** (proposal 005) |
 | **M6** Grounded Q&A | LLM client (+fake), cache, citation validator, abstention calibration, `noterecall ask` | Validator tests cover: unknown ID, empty citations, valid; τ chosen on dev; abstention F1 reported on test; no network in default test run |
 | **M7** Concepts + cards | extraction, merge, `concepts.yaml` review flow, card generation | 100% of stored cards pass citation validation; drop rate reported; judge calibrated (κ reported) and faithfulness reported |
 | **M8** Scheduler + planner | FSRS wrapper, review CLI, `noterecall plan` | Fixed-clock tests: budget never exceeded; overdue before due before new; deterministic ties; round-trip JSON of card state |

@@ -60,13 +60,10 @@ revision = "233902d25c440f23af6f7d6e94d2946bac0bee0a"
 [llm]
 # OpenAI (proposal 004). The key comes from the OPENAI_API_KEY environment variable.
 provider = "openai"
-blurb_model = "gpt-5-mini"
-clean_model = "gpt-5-mini"
+# No M5 step uses it (proposal 005); M6 and M7 do.
+model = "gpt-5-mini"
 # Lowest effort the API allows for the model; the first real call checks it (a rejection fails loudly).
 reasoning_effort = "minimal"
-# Caps include reasoning tokens. Pre-registered, not tuned.
-max_output_tokens_blurb = 400
-max_output_tokens_clean = 4096
 timeout_s = 120.0
 max_retries = 3
 concurrency = 4
