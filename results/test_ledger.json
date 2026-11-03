@@ -5,6 +5,12 @@
       "milestone": "M4",
       "results_file": "retrieval_test_M4.json",
       "results_sha256": "b335d20769ba6e281a1510a4623878ddccc5206199d8631c12dcb71576ad1c64"
+    },
+    {
+      "git_sha": "901a6d29a1b3204af74cd9bce6a2e502fd9f1eda",
+      "milestone": "M5",
+      "results_file": "retrieval_test_M5.json",
+      "results_sha256": "4298ea04bd738df30a11c9d488582f46d6b5ddc4165a7c1d398ddf3105fdc388"
     }
   ],
   "schema_version": 1
