@@ -12,6 +12,7 @@ from noterecall import cli
 from noterecall.chunking.tokens import Tokenizer
 from noterecall.config import load_settings
 from noterecall.enrich import steps
+from noterecall.enrich.steps import model_tokenizer
 from noterecall.eval.gold import save_gold
 from noterecall.eval.ledger import read_ledger
 from noterecall.eval.run_enrichment import EnrichmentDevResults
@@ -153,3 +154,31 @@ def test_the_enrichment_eval_runs_dev_then_test_once(
     again = run(config, "eval", "--suite", "enrichment", "--split", "test", "--milestone", "M5")
     assert again.exit_code == 1
     assert "already run" in again.stderr
+
+
+def test_enrich_needs_a_synced_database(config: Path) -> None:
+    decide(config)
+    for step in ("blurbs", "clean"):
+        result = run(config, "enrich", step, "--dry-run")
+        assert result.exit_code == 1
+        assert "the database has no notebooks" in result.stderr
+
+
+def test_the_enrichment_test_run_needs_decisions_and_the_dev_results(
+    config: Path, notebooks: Notebooks, fake_models: list[str]
+) -> None:
+    settings = load_settings(config)
+    save_gold(make_gold(notebooks), settings.paths.gold_path)
+    args = ("eval", "--suite", "enrichment", "--split", "test", "--milestone", "M5")
+    no_decisions = run(config, *args)
+    assert no_decisions.exit_code == 1
+    assert "config has no [retrieval.decided]" in no_decisions.stderr
+    decide(config)
+    no_dev = run(config, *args)
+    assert no_dev.exit_code == 1
+    assert "cannot read the enrichment dev results" in no_dev.stderr
+
+
+@pytest.mark.live
+def test_the_model_tokenizer_is_the_encoding_tiktoken_maps_to_the_model() -> None:
+    assert model_tokenizer("gpt-5-mini").name == "o200k_base"

@@ -133,3 +133,10 @@ def test_every_variant_is_evaluated_once_and_reported() -> None:
     assert len(calls) == len(set(calls))  # no configuration is run twice
     assert [c.name for c in ablation.configs] == calls
     assert ablation.reference.name == PREFIX
+
+
+def test_a_noisy_negative_header_effect_is_not_called_harmful() -> None:
+    deltas = [-0.02 if i % 2 == 0 else 0.015 for i in range(10)]  # mean -0.0025, interval spans 0
+    comparison = run({HEADER: deltas}).stages[0].comparisons[0]
+    assert comparison.ci.mean < 0 < comparison.ci.high
+    assert "HURTS" not in header_note(comparison)

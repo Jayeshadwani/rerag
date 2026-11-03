@@ -465,3 +465,28 @@ def test_a_planted_secret_never_reaches_what_would_be_sent_to_the_model(
         for secret in (FAKE_ANTHROPIC_KEY, FAKE_AWS_ACCESS_KEY, FAKE_AWS_SECRET_KEY):
             assert secret not in sent
     assert "[REDACTED" in "".join(p.shared for p in transport.prompts)
+
+
+def test_an_empty_group_is_skipped(tmp_path: Path) -> None:
+    template = load_prompt("contextual_blurb")
+    groups = [[], blurb_groups(two_notebooks(), template, "m", 80)[1]]
+    client, transport = make_client(tmp_path)
+    answers, summary = run_groups(groups, client, Blurb, concurrency=2)
+    assert (len(answers), summary.jobs) == (2, 2)
+    assert len(transport.prompts) == 2
+
+
+def test_swapping_two_fenced_blocks_that_sit_between_text_is_rejected() -> None:
+    first = f"{FENCE}\nfirst\n{FENCE}"
+    second = f"{FENCE}\nsecond\n{FENCE}"
+    original = f"intro\n{first}\nmid\n{second}\nend"
+    swapped = f"intro\n{second}\nmid\n{first}\nend"
+    # the same two blocks, in the other order: a set comparison would call these equal
+    assert sorted(fenced_blocks(original)) == sorted(fenced_blocks(swapped))
+    assert verify_clean(original, swapped).reasons == ("code_fence_changed",)
+
+
+def test_an_inline_code_span_is_protected_without_its_padding_spaces() -> None:
+    assert protected_tokens("Call ` spaced ` now") == {"spaced"}
+    # kept as "spaced" in the cleaned cell (no padding) is still the same code
+    assert verify_clean("Call ` spaced ` now please ok", "Call `spaced` now please ok").ok
