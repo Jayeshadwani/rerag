@@ -88,3 +88,9 @@ lexical = "code"
 dense_model = "BAAI/bge-base-en-v1.5"
 rrf_k = 10
 rerank = false
+
+# The deterministic context header is on (ADR-007 locks it). Its on/off dev row is in
+# results/header_ablation_dev.json (report only). The LLM blurb and LLM clean were not run
+# (proposal 005).
+[retrieval.decided.variant]
+header = true

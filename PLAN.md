@@ -145,6 +145,8 @@ A chunk = a markdown heading section and its following cells, split on **cell bo
 Every chunk is indexed (both BM25 and dense) with `"{notebook title} > {H1} > {H2}"` prepended. The LLM contextual blurb (the Contextual Retrieval method, with the notebook as a shared prefix that the provider caches) is an ablation. Hypothesis to test: for well-structured notebooks the free deterministic header captures most of the gain. Either outcome is a good interview story.
 *Amended by proposal 004, `docs/proposals/004-llm-provider-openai.md` (approved by the owner): the LLM provider is OpenAI; the blurb method is provider-agnostic.*
 *Amended by proposal 005 (approved by the owner): the LLM blurb is **not run**. This is an owner decision on cost and benefit, not a measured result: it is **not measured**. The deterministic header stays on; M5 reports its on/off dev row.*
+*Result (M5, dev split, `results/header_ablation_dev.json`, rendered by `scripts/render_results.py`): header on vs off, Recall@10 +0.042, 95% CI [-0.029, +0.117], report only. The interval includes 0, so the data neither shows a gain nor a loss; the header stays on because ADR-007 locks it.*
+
 
 ### ADR-008 — Storage: SQLite + NumPy exact search, no vector DB
 Corpus is ~53 notebooks → low thousands of chunks. Exact cosine over a few thousand vectors is a single matrix multiply (milliseconds) with perfect recall; an ANN index adds approximation error and ops cost for zero benefit. SQLite holds everything else (one file, transactional, inspectable). **Revisit trigger:** > 200k chunks or p95 dense search > 50 ms → FAISS/HNSW. Write this trigger in the README.
