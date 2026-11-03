@@ -110,3 +110,17 @@ citation validity, retries, uncited-claim rate, gold-hit rate, rows, tokens and 
 **Limits that apply to the decision.** Six unanswerable dev queries: one more refusal is a change of
 17 points and is not statistical evidence. The rule is a pre-registered choice, not a test. The test
 split is not touched by this addendum.
+
+**Result of addendum 1 (dev; `results/generation_dev.json` for the original prompt `f715ca2be4cf`,
+`results/generation_dev_prompt2.json` for the revision `ee9346d6e271`; rendered by
+`python scripts/render_results.py results/generation_dev.json results/generation_dev_prompt2.json`):**
+
+- answerable queries refused: 0/54 for both (the bound was at most 2/54);
+- unanswerable queries refused: 2/6 for the original, 3/6 for the revision (the rule needed strictly more than 2/6);
+- by the rule above the revision is **adopted**. The change is one query (q037); six unanswerable
+  queries cannot tell this apart from chance, and the decision follows the rule, not a significance test;
+- other numbers moved too, outside the rule: the revision writes shorter answers (169 claims against 205),
+  first-attempt validity (60/60), retries (0) and gold-hit (45/54) are unchanged, and the cost is
+  $0.0522 against $0.0547.
+
+No second revision was tried. The test split has not been run.

@@ -41,16 +41,29 @@ that are near the topic of the notes look like answerable ones to cosine and to 
 thresholds therefore refuse nothing, the bound was kept, and **abstention rests on the model's own
 `insufficient` flag**. The ADR-011 Result line records this.
 
-Dev results, rendered from `results/generation_dev.json` by `scripts/render_results.py`:
+One answer-prompt revision was tried on dev under a rule written down first (proposal 006, addendum 1):
+adopt it only if answerable queries refused stay at most 2/54 and unanswerable queries refused strictly
+improve on 2/6. It met both, so the shipped prompt is the revision (it says to answer only if the notes
+directly contain the answer). Both prompts side by side, rendered from `results/generation_dev.json`
+(original) and `results/generation_dev_prompt2.json` (shipped) by `scripts/render_results.py`:
 
-| Queries | n | Answered | Refused | by stage 1 | by the model | invalid twice |
-|---|---|---|---|---|---|---|
-| answerable | 54 | 54 | 0/54 | 0 | 0 | 0 |
-| unanswerable | 6 | 4 | 2/6 | 0 | 2 | 0 |
+| Measure | original `f715ca2be4cf` | shipped `ee9346d6e271` |
+|---|---|---|
+| answerable queries refused | 0/54 | 0/54 |
+| unanswerable queries refused | 2/6 | 3/6 |
+| first attempt valid | 60/60 | 60/60 |
+| retried | 0/60 | 0/60 |
+| uncited claims, first attempt | 0/205 | 0/169 |
+| gold-hit (answered answerable citing a gold chunk) | 45/54 | 45/54 |
+| claims in all answers, first attempt | 205 | 169 |
+| input / output tokens | 119804 / 12386 | 120344 / 11080 |
+| cost USD | 0.0547 | 0.0522 |
 
-First-attempt citation validity was 60/60 with no retries and 0 uncited claims out of 205; 45 of the 54
-answered answerable queries cite a chunk that contains a gold-relevant cell. With so few unanswerable
-queries (6 dev, 3 test) these counts are coarse. The dev run cost $0.0547.
+The improvement is one unanswerable query out of six, so it is a pre-registered choice and not statistical
+evidence; the revision also gives shorter answers (fewer claims). The other 3 unanswerable dev queries
+are still answered, with citations that pass the structural check. Whether those answers are supported by
+the cited notes is not measured yet (M7). Gold-hit says that 9 of the 54 answered answerable queries cite
+no gold-labelled cell, which does not by itself make an answer wrong. The test split has not been run.
 
 ## Known limitations
 

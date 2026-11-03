@@ -506,3 +506,34 @@ def test_the_generation_results_render_with_counts_per_kind_of_query(
     assert "| two-stage (ships) | 0/" in out
     assert "Total cost $" in out
     assert "answered answerable queries citing a gold-relevant chunk" in out
+
+
+def test_two_generation_runs_render_side_by_side_and_other_pairs_are_refused(
+    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    settings = decided_settings(load_settings(config), NEVER_REFUSE)
+    resources = make_resources(settings, notebooks, tiny_tokenizer)
+    gold = make_gold(notebooks)
+    paths = []
+    for name, refuse_unanswerable in (("a.json", False), ("b.json", True)):
+
+        def responder(p: Prompt, flag: bool = refuse_unanswerable) -> str:
+            if flag and "nothing" in p.variable:
+                return json.dumps({"insufficient": True, "claims": []})
+            return answer_with_first_note(p)
+
+        (tmp_path / name[0]).mkdir()
+        generator, _ = make_generator(settings, tmp_path / name[0], responder)
+        results = run_generation(settings, gold, resources, CONTEXT, generator, Split.DEV)
+        (tmp_path / name).write_text(results.model_dump_json(), encoding="utf-8")
+        paths.append(str(tmp_path / name))
+    assert render_main(paths) == 0
+    out = capsys.readouterr().out
+    unanswerable = select_all(gold, Split.DEV)
+    n = sum(1 for q in unanswerable if q.type is QueryType.UNANSWERABLE)
+    assert f"| unanswerable queries refused | 0/{n} | {n}/{n} |" in out
+    assert "| cost USD |" in out
+    assert "gold-hit" in out
+    assert render_main([paths[0], "results/corpus_stats.json"]) == 1
+    assert "both are generation results" in capsys.readouterr().err

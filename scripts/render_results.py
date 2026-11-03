@@ -21,7 +21,13 @@ from noterecall.eval.run_header import HeaderDevResults
 from noterecall.eval.run_retrieval import DevResults, TestResults
 from noterecall.eval.stats import BootstrapValidation
 from noterecall.ingest.stats import CorpusStats, Distribution, GitState
-from render_retrieval import render_dev, render_generation, render_header, render_test
+from render_retrieval import (
+    render_dev,
+    render_generation,
+    render_generation_pair,
+    render_header,
+    render_test,
+)
 
 
 class Interval(BaseModel):
@@ -240,12 +246,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point: prints Markdown to stdout; exit 1 on a missing or invalid file."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n", maxsplit=1)[0])
     parser.add_argument("path", type=Path)
+    parser.add_argument(
+        "other", type=Path, nargs="?", help="a second generation file, to render side by side"
+    )
     args = parser.parse_args(argv)
     try:
         report = load_results(args.path)
+        other = load_results(args.other) if args.other is not None else None
     except (OSError, ValidationError, json.JSONDecodeError) as exc:
         print(f"error: cannot render {args.path}: {exc}", file=sys.stderr)
         return 1
+    if other is not None:
+        if not (isinstance(report, GenerationResults) and isinstance(other, GenerationResults)):
+            print("error: two files can only be compared if both are generation results",
+                  file=sys.stderr)  # fmt: skip
+            return 1
+        sys.stdout.write(render_generation_pair(report, other))
+        return 0
     if isinstance(report, ChunkStats):
         sys.stdout.write(render_chunk_stats(report))
     elif isinstance(report, GenerationResults):

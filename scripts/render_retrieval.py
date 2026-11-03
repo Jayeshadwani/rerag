@@ -4,7 +4,7 @@ Every number is read from the results file; nothing is typed by hand. Used by
 `scripts/render_results.py`.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from noterecall.eval.ablation import Comparison, ConfigResult
 from noterecall.eval.run_generation import GenerationResults
@@ -298,3 +298,50 @@ def render_generation(result: GenerationResults) -> str:
         outcome_rows,
     )
     return "\n\n".join([outcomes, validity, rows, cost, footer]) + "\n"
+
+
+def _split_counts(result: GenerationResults) -> tuple[str, str]:
+    answerable = [q for q in result.queries if not q.unanswerable]
+    unanswerable = [q for q in result.queries if q.unanswerable]
+    refused_a = sum(1 for q in answerable if q.outcome.value != "answered")
+    refused_u = sum(1 for q in unanswerable if q.outcome.value != "answered")
+    return f"{refused_a}/{len(answerable)}", f"{refused_u}/{len(unanswerable)}"
+
+
+def render_generation_pair(first: GenerationResults, second: GenerationResults) -> str:
+    """Two runs of the same split side by side (for example two answer prompts)."""
+    columns = [f"prompt {r.meta.prompt_versions['answer']}" for r in (first, second)]
+
+    def valid(r: GenerationResults) -> str:
+        return f"{r.validity.first_attempt_valid}/{r.validity.queries_to_model}"
+
+    def retried(r: GenerationResults) -> str:
+        return f"{r.validity.retried}/{r.validity.queries_to_model}"
+
+    def uncited(r: GenerationResults) -> str:
+        return f"{r.validity.uncited_claims_first_attempt}/{r.validity.claims_first_attempt}"
+
+    def gold_hit(r: GenerationResults) -> str:
+        return f"{r.validity.answered_citing_a_relevant_chunk}/{r.validity.answered_answerable}"
+
+    def tokens(r: GenerationResults) -> str:
+        return f"{r.total_usage.input_tokens} / {r.total_usage.output_tokens}"
+
+    measures: list[tuple[str, Callable[[GenerationResults], str]]] = [
+        ("answerable queries refused", lambda r: _split_counts(r)[0]),
+        ("unanswerable queries refused", lambda r: _split_counts(r)[1]),
+        ("first attempt valid", valid),
+        ("retried", retried),
+        ("uncited claims, first attempt", uncited),
+        ("gold-hit (answered answerable citing a gold chunk)", gold_hit),
+        ("claims in all answers, first attempt", lambda r: str(r.validity.claims_first_attempt)),
+        ("input / output tokens", tokens),
+        ("cost USD", lambda r: f"{r.total_cost_usd:.4f}"),
+    ]
+    rows = [[label, *(fn(r) for r in (first, second))] for label, fn in measures]
+    meta = first.meta
+    footer = (
+        f"{meta.queries} {meta.split.value} queries, same retrieval and thresholds; commits "
+        f"`{first.meta.git.sha[:12]}` and `{second.meta.git.sha[:12]}`."
+    )
+    return _grid(("Measure", *columns), rows) + "\n\n" + footer + "\n"
