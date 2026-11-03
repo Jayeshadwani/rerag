@@ -19,7 +19,7 @@ from noterecall.eval.run_generation import (
     select_all,
 )
 from noterecall.eval.run_retrieval import QueryRef, RunError, select_queries
-from noterecall.generate.abstain import Thresholds
+from noterecall.generate.abstain import Thresholds, refusal_metrics
 from noterecall.generate.answer import CitedClaim, Generator, Outcome, Response
 from noterecall.generate.ask import Asker, AskResult
 from noterecall.generate.citations import Answer
@@ -39,7 +39,7 @@ from noterecall.llm.cost import CostMeter
 from noterecall.llm.fake import FakeTransport, Responder
 from noterecall.llm.prompts import load_prompt
 from noterecall.llm.transport import CachingClient
-from noterecall.models import Cell, Chunk
+from noterecall.models import Cell, Chunk, RetrievalHit
 from noterecall.retrieval.pipeline import AbstentionSignals, PipelineError, PipelineSpec
 
 Notebooks = list[tuple[str, list[Cell]]]
@@ -431,3 +431,47 @@ def test_the_dry_run_client_refuses_every_call() -> None:
                     max_output_tokens=5)  # fmt: skip
     with pytest.raises(LLMCallError, match="never calls the API"):
         NoCalls().complete_json(prompt, Answer)
+
+
+def test_the_signals_take_the_best_dense_hit_and_the_best_bm25_hit_over_the_query_tokens(
+    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = decided_settings(load_settings(config))
+    pipeline, _cap = decided_pipeline(settings, make_resources(settings, notebooks, tiny_tokenizer))
+    assert pipeline._dense is not None
+    assert pipeline._lexical is not None
+    dense = [
+        RetrievalHit(chunk_id="a", score=0.9, rank=1),
+        RetrievalHit(chunk_id="b", score=0.2, rank=2),
+    ]
+    lexical = [
+        RetrievalHit(chunk_id="b", score=6.0, rank=1),
+        RetrievalHit(chunk_id="a", score=2.0, rank=2),
+    ]
+    monkeypatch.setattr(pipeline._dense, "search", lambda _q, _k: dense)
+    monkeypatch.setattr(pipeline._lexical, "search", lambda _q, _k: lexical)
+    _hits, signals = pipeline.retrieve_with_signals("alpha beta gamma")
+    # three query tokens: 6.0 / 3 = 2.0 (the best BM25 hit, not the last one); cosine 0.9 (the best)
+    assert pipeline._lexical.query_tokens("alpha beta gamma") == 3
+    assert signals == AbstentionSignals(top_cosine=0.9, bm25_norm=2.0)
+    monkeypatch.setattr(pipeline._lexical, "search", lambda _q, _k: [])
+    assert pipeline.retrieve_with_signals("alpha beta gamma")[1].bm25_norm == 0.0
+
+
+def test_the_cosine_only_row_applies_the_cosine_only_threshold_to_the_cosine(
+    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path
+) -> None:
+    base = decided_settings(load_settings(config), NEVER_REFUSE)
+    generation = base.generation.model_copy(update={"cosine_only": 0.6})
+    settings = base.model_copy(update={"generation": generation})
+    resources = make_resources(settings, notebooks, tiny_tokenizer)
+    generator, _ = make_generator(settings, tmp_path)
+    results = run_generation(
+        settings, make_gold(notebooks), resources, CONTEXT, generator, Split.DEV
+    )
+    refused = [(o.unanswerable, o.top_cosine < 0.6) for o in results.queries]
+    expected = refusal_metrics(refused)
+    assert results.rows[0].metrics == expected
+    assert 0 < expected.false_refusals < expected.answerable  # a real, partial refusal
+    assert results.rows[1].metrics.false_refusals == 0  # the shipped thresholds refuse nothing
+    assert results.cosine_only_threshold == 0.6
