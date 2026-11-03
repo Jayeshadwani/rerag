@@ -26,6 +26,21 @@ encoding = "tiny"
 [chunking]
 candidate_caps = [8, 16]
 
+[llm]
+provider = "openai"
+model = "test-model"
+reasoning_effort = "minimal"
+timeout_s = 5.0
+max_retries = 2
+concurrency = 2
+max_usd = 1.0
+cache_path = "llm_cache.sqlite"
+
+[llm.prices."test-model"]
+input = 1.0
+cached_input = 0.1
+output = 4.0
+
 [retrieval]
 candidate_depth = 5
 fused_depth = 3
@@ -217,3 +232,23 @@ def test_embedding_candidates_must_not_be_empty(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigError, match="embeddings"):
         load_settings(_write(tmp_path, text))
+
+
+def test_llm_section_loads_and_every_model_needs_a_price(tmp_path: Path) -> None:
+    llm = load_settings(_write(tmp_path, VALID_TOML)).llm
+    assert (llm.provider, llm.model, llm.reasoning_effort) == (
+        "openai",
+        "test-model",
+        "minimal",
+    )
+    assert llm.prices["test-model"].cached_input == 0.1
+    broken = VALID_TOML.replace('model = "test-model"', 'model = "other-model"')
+    with pytest.raises(ConfigError, match=r"no \[llm.prices\] entry for model 'other-model'"):
+        load_settings(_write(tmp_path, broken))
+
+
+def test_default_llm_config_matches_the_owner_decisions() -> None:
+    llm = load_settings(DEFAULT_CONFIG_PATH).llm
+    assert (llm.model, llm.max_usd) == ("gpt-5-mini", 10.0)
+    price = llm.prices["gpt-5-mini"]
+    assert (price.input, price.cached_input, price.output) == (0.25, 0.025, 2.0)

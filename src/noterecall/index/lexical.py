@@ -1,12 +1,13 @@
 """BM25 index over chunk text. Implements ADR-005 (lexical side of the hybrid).
 
+An optional mapping supplies the enriched text to index in place of the chunk text (ADR-007).
 Wraps `bm25s` (Lucene-variant BM25, k1=1.5, b=0.75). Chunks are tokenized by a function passed
 in, so the plain and the code-aware tokenizer are interchangeable in the ablation. Ranking is
 done here from the full score vector so that ties break deterministically (by chunk order), and
 chunks that match no query token are not returned.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 import bm25s
 import numpy as np
@@ -20,6 +21,15 @@ class LexicalError(Exception):
     """Raised when the index cannot be built or queried."""
 
 
+def indexed_text(chunk: Chunk, texts: Mapping[str, str] | None) -> str:
+    """The text to index for a chunk: the supplied one (it must exist) or the chunk's own."""
+    if texts is None:
+        return chunk.text
+    if chunk.id not in texts:
+        raise LexicalError(f"no indexed text was supplied for chunk {chunk.id}")
+    return texts[chunk.id]
+
+
 class LexicalIndex:
     """A BM25 index; build once per (chunk set, tokenizer)."""
 
@@ -29,12 +39,14 @@ class LexicalIndex:
         self._tokenize = tokenize
 
     @classmethod
-    def build(cls, chunks: Sequence[Chunk], tokenize: Tokenize) -> "LexicalIndex":
-        """Index the chunks' text."""
+    def build(
+        cls, chunks: Sequence[Chunk], tokenize: Tokenize, texts: Mapping[str, str] | None = None
+    ) -> "LexicalIndex":
+        """Index the chunks' text, or `texts[chunk.id]` where an enriched text is supplied."""
         if not chunks:
             raise LexicalError("cannot index zero chunks")
         bm25 = bm25s.BM25()
-        bm25.index([tokenize(c.text) for c in chunks], show_progress=False)
+        bm25.index([tokenize(indexed_text(c, texts)) for c in chunks], show_progress=False)
         return cls([c.id for c in chunks], bm25, tokenize)
 
     def search(self, query: str, k: int) -> list[RetrievalHit]:

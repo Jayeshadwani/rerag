@@ -24,7 +24,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from noterecall.eval.stats import BootstrapCI, Decision, adopt, paired_bootstrap, paired_deltas
-from noterecall.retrieval.pipeline import PipelineSpec, StageTimes
+from noterecall.retrieval.pipeline import PipelineSpec, StageTimes, Variant
 
 Chunker = Literal["structural", "fixed"]
 PRIMARY = "recall@10"
@@ -38,6 +38,7 @@ class RunKey(BaseModel):
     cap: int
     chunker: Chunker
     spec: PipelineSpec
+    variant: Variant = Variant()
 
 
 class LatencyStat(BaseModel):
@@ -167,7 +168,8 @@ def describe(key: RunKey) -> str:
         parts.append(f"rrf{spec.rrf_k}")
     if spec.rerank:
         parts.append("rerank")
-    return f"{key.chunker}-{key.cap} | {' + '.join(parts)}"
+    header = " +header" if key.variant.header else ""
+    return f"{key.chunker}-{key.cap} | {' + '.join(parts)}{header}"
 
 
 class Rule(BaseModel):

@@ -57,6 +57,26 @@ passage_prefix = "passage: "
 id = "cross-encoder/ms-marco-MiniLM-L6-v2"
 revision = "233902d25c440f23af6f7d6e94d2946bac0bee0a"
 
+[llm]
+# OpenAI (proposal 004). The key comes from the OPENAI_API_KEY environment variable.
+provider = "openai"
+# No M5 step uses it (proposal 005); M6 and M7 do.
+model = "gpt-5-mini"
+# Lowest effort the API allows for the model; the first real call checks it (a rejection fails loudly).
+reasoning_effort = "minimal"
+timeout_s = 120.0
+max_retries = 3
+concurrency = 4
+# Hard stop: no call is made once the money actually spent reaches this.
+max_usd = 10.0
+cache_path = "data/llm_cache.sqlite"
+
+# USD per 1M tokens, supplied by the owner.
+[llm.prices."gpt-5-mini"]
+input = 0.25
+cached_input = 0.025
+output = 2.00
+
 # Data-decided by the M4 dev ablation (results/retrieval_ablation_dev.json, commit 2b3d953).
 # Hybrid of BM25 (code tokenizer) and dense bge-base with RRF k=10, no reranker. The hybrid was
 # adopted after the owner reclassified it as free (proposal 003); the reranker failed its rule.
@@ -68,3 +88,9 @@ lexical = "code"
 dense_model = "BAAI/bge-base-en-v1.5"
 rrf_k = 10
 rerank = false
+
+# The deterministic context header is on (ADR-007 locks it). Its on/off dev row is in
+# results/header_ablation_dev.json (report only). The LLM blurb and LLM clean were not run
+# (proposal 005).
+[retrieval.decided.variant]
+header = true

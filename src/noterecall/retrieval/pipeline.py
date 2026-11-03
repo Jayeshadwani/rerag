@@ -42,6 +42,15 @@ class PipelineSpec(BaseModel):
         return self
 
 
+class Variant(BaseModel):
+    """What the indexed text is made of (ADR-007): with `header`, the deterministic context
+    header is put in front of each chunk. Off is the M4 pipeline."""
+
+    model_config = ConfigDict(frozen=True)
+
+    header: bool = False
+
+
 class Depths(BaseModel):
     """How many hits each stage passes on."""
 

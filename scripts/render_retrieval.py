@@ -7,6 +7,7 @@ Every number is read from the results file; nothing is typed by hand. Used by
 from collections.abc import Sequence
 
 from noterecall.eval.ablation import Comparison, ConfigResult
+from noterecall.eval.run_header import HeaderDevResults
 from noterecall.eval.run_retrieval import DevResults, TestResults
 
 
@@ -181,6 +182,37 @@ def render_test(result: TestResults) -> str:
             [
                 config_table([result.chosen, *result.references], budget),
                 decision_table(result.comparisons),
+                footer,
+            ]
+        )
+        + "\n"
+    )
+
+
+def render_header(result: HeaderDevResults) -> str:
+    """The M5 header row: with and without the header on dev, and what it means."""
+    ab = result.ablation
+    budget = f"recall@tokens={result.meta.config['retrieval']['budget_tokens']}"  # type: ignore[index]
+    truncation = _grid(
+        ("Variant", "Chunks", "Cut at the input limit"),
+        [
+            ["header on" if t.variant.header else "header off", str(t.chunks), str(t.truncated)]
+            for t in result.truncation
+        ],
+    )
+    meta = result.meta
+    footer = (
+        f"{meta.queries} dev queries, seed {meta.seed}, {meta.bootstrap_resamples:,} bootstrap "
+        f"resamples, commit `{meta.git.sha[:12]}`{' (dirty tree)' if meta.git.dirty else ''}. "
+        "The LLM blurb and the LLM clean were not tested (proposal 005, owner decision)."
+    )
+    return (
+        "\n\n".join(
+            [
+                decision_table([ab.comparison]),
+                ab.note,
+                config_table([ab.without_header, ab.with_header], budget),
+                truncation,
                 footer,
             ]
         )

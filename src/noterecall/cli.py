@@ -9,6 +9,7 @@ unexpected errors are not caught.
 import importlib.metadata
 import sqlite3
 import sys
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -17,7 +18,7 @@ import typer
 
 from noterecall.chunking.report import compute_chunk_stats
 from noterecall.chunking.tokens import TokenizerError, load_tokenizer
-from noterecall.config import ConfigError, Settings, load_settings
+from noterecall.config import ConfigError, DecidedConfig, Settings, load_settings
 from noterecall.eval.gold import (
     CellRef,
     GoldError,
@@ -42,6 +43,7 @@ from noterecall.eval.ledger import (
     read_ledger,
     record_run,
 )
+from noterecall.eval.run_header import HeaderDevResults, run_header_dev
 from noterecall.eval.run_retrieval import (
     DevResults,
     Resources,
@@ -421,7 +423,9 @@ def _versions() -> dict[str, str]:
 
 
 def _resources(
-    settings: Settings, conn: sqlite3.Connection, models: set[str] | None = None
+    settings: Settings,
+    conn: sqlite3.Connection,
+    models: set[str] | None = None,
 ) -> Resources:
     """Corpus, embedding services (cached in the database) and the reranker, all pinned."""
     notebooks = list(notebook_cells(conn))
@@ -473,8 +477,22 @@ def _check_matches_dev(settings: Settings) -> None:
         dev = DevResults.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise RunError(f"cannot read the dev results at {path}: {exc}") from exc
-    if dev.decided != decided:
+    m4 = decided.model_copy(update={"variant": dev.decided.variant})
+    if dev.decided != m4:
         raise RunError("[retrieval.decided] differs from the decisions in the dev results file")
+    if decided.variant.header:
+        _check_matches_header_dev(settings, decided)
+
+
+def _check_matches_header_dev(settings: Settings, decided: DecidedConfig) -> None:
+    """With the header on, the header dev results must exist and name the same decisions."""
+    path = settings.paths.results_dir / "header_ablation_dev.json"
+    try:
+        dev = HeaderDevResults.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RunError(f"cannot read the header dev results at {path}: {exc}") from exc
+    if dev.decided != decided:
+        raise RunError("[retrieval.decided] differs from the decisions in the header dev results")
 
 
 def _eval_test(settings: Settings, milestone: str, out: Path | None) -> str:
@@ -509,6 +527,34 @@ def _eval_test(settings: Settings, milestone: str, out: Path | None) -> str:
     return f"eval: wrote {target} and recorded the test run for {milestone}"
 
 
+class Suite(StrEnum):
+    """Which evaluation `noterecall eval` runs."""
+
+    RETRIEVAL = "retrieval"
+    HEADER = "header"
+
+
+def _eval_header_dev(settings: Settings, out: Path | None) -> str:
+    decided = settings.retrieval.decided
+    if decided is None:
+        raise RunError("config has no [retrieval.decided]; the M4 decisions are the base of M5")
+    gold = load_gold(settings.paths.gold_path)
+    conn = connect(settings.paths.db_path)
+    try:
+        models = {decided.pipeline.dense_model} if decided.pipeline.dense_model else set()
+        results = run_header_dev(
+            settings,
+            gold,
+            _resources(settings, conn, {m for m in models if m}),
+            RunContext(git=git_state(), versions=_versions()),
+        )
+    finally:
+        conn.close()
+    target = out if out is not None else settings.paths.results_dir / "header_ablation_dev.json"
+    _write_json(target, results.model_dump_json(indent=2))
+    return f"eval: wrote {target}"
+
+
 @app.command("eval")
 def eval_command(
     config: ConfigOption = None,
@@ -519,12 +565,21 @@ def eval_command(
         str | None, typer.Option("--milestone", help="Required for --split test.")
     ] = None,
     out: Annotated[Path | None, typer.Option("--out", help="Output JSON path.")] = None,
+    suite: Annotated[
+        Suite, typer.Option("--suite", help="retrieval (M4) or header (M5, dev only).")
+    ] = Suite.RETRIEVAL,
 ) -> None:
-    """Run the retrieval ablation on dev, or the decided pipeline once on test."""
+    """Run the ablation on dev, or the decided configuration once on test."""
     try:
         settings = _settings(config)
+        if suite is Suite.HEADER and split is Split.TEST:
+            raise RunError("the header row is a dev report; use --suite retrieval for test")
         if split is Split.DEV:
-            typer.echo(_eval_dev(settings, out))
+            typer.echo(
+                _eval_header_dev(settings, out)
+                if suite is Suite.HEADER
+                else _eval_dev(settings, out)
+            )
         else:
             if milestone is None:
                 raise RunError(

@@ -20,6 +20,7 @@ from noterecall.chunking.fixed import fixed_chunks
 from noterecall.chunking.structural import chunk_notebook
 from noterecall.chunking.tokens import Tokenizer
 from noterecall.config import DecidedConfig, Settings
+from noterecall.enrich.headers import index_text
 from noterecall.eval.ablation import (
     Ablation,
     AblationParams,
@@ -44,7 +45,13 @@ from noterecall.index.lexical import LexicalIndex
 from noterecall.ingest.stats import GitState
 from noterecall.models import Cell, Chunk
 from noterecall.retrieval.dense import DenseIndex
-from noterecall.retrieval.pipeline import Components, Depths, PipelineSpec, RetrievalPipeline
+from noterecall.retrieval.pipeline import (
+    Components,
+    Depths,
+    PipelineSpec,
+    RetrievalPipeline,
+    Variant,
+)
 from noterecall.retrieval.rerank import Reranker
 
 log = structlog.get_logger()
@@ -97,7 +104,11 @@ def build_chunks(
 
 
 class Resources:
-    """Builds corpora, indexes and pipelines on demand and keeps them (each is expensive)."""
+    """Builds corpora, indexes and pipelines on demand and keeps them (each is expensive).
+
+    A run key's variant decides the text that is indexed (ADR-007): the chunk text, or the
+    deterministic header followed by it. Cited and displayed text is always the chunk's own.
+    """
 
     def __init__(
         self,
@@ -113,8 +124,8 @@ class Resources:
         self.reranker = reranker
         self._depths = depths
         self._chunks: dict[tuple[int, Chunker], list[Chunk]] = {}
-        self._lexical: dict[tuple[int, Chunker, str], LexicalIndex] = {}
-        self._dense: dict[tuple[int, Chunker, str], DenseIndex] = {}
+        self._lexical: dict[tuple[int, Chunker, str, Variant], LexicalIndex] = {}
+        self._dense: dict[tuple[int, Chunker, str, Variant], DenseIndex] = {}
         self._coverage: CoverageIndex | None = None
 
     def chunks(self, cap: int, chunker: Chunker) -> list[Chunk]:
@@ -124,20 +135,28 @@ class Resources:
             )
         return self._chunks[(cap, chunker)]
 
+    def indexed_texts(self, key: RunKey) -> dict[str, str] | None:
+        """The text each chunk is indexed under, or None for the plain chunk text."""
+        if not key.variant.header:
+            return None
+        return {c.id: index_text(c, True) for c in self.chunks(key.cap, key.chunker)}
+
     def pipeline(self, key: RunKey) -> RetrievalPipeline:
         chunks = self.chunks(key.cap, key.chunker)
-        spec, parts = key.spec, Components()
+        spec = key.spec
+        texts = self.indexed_texts(key)
         lexical = dense = None
         if spec.lexical is not None:
-            lk = (key.cap, key.chunker, spec.lexical)
+            lk = (key.cap, key.chunker, spec.lexical, key.variant)
             if lk not in self._lexical:
                 tokenize = tokenize_code if spec.lexical == "code" else tokenize_plain
-                self._lexical[lk] = LexicalIndex.build(chunks, tokenize)
+                self._lexical[lk] = LexicalIndex.build(chunks, tokenize, texts)
             lexical = self._lexical[lk]
         if spec.dense_model is not None:
-            dk = (key.cap, key.chunker, spec.dense_model)
+            dk = (key.cap, key.chunker, spec.dense_model, key.variant)
             if dk not in self._dense:
-                self._dense[dk] = DenseIndex.build(chunks, self._service(spec.dense_model))
+                service = self._service(spec.dense_model)
+                self._dense[dk] = DenseIndex.build(chunks, service, texts)
             dense = self._dense[dk]
         parts = Components(lexical=lexical, dense=dense, reranker=self.reranker)
         return RetrievalPipeline(spec, {c.id: c for c in chunks}, self._depths, parts)
@@ -408,6 +427,15 @@ def reference_specs(pipeline: PipelineSpec) -> list[PipelineSpec]:
     return [] if pipeline == baseline else [baseline]
 
 
+def comparison_rows(decided: DecidedConfig) -> list[tuple[PipelineSpec, Variant]]:
+    """The comparison rows for the test run. With the header on, the first row is the same
+    pipeline with the header off (the M4 pipeline); then the parts of a hybrid, as in M4."""
+    rows = [(spec, decided.variant) for spec in reference_specs(decided.pipeline)]
+    if decided.variant.header:
+        rows.insert(0, (decided.pipeline, Variant()))
+    return rows
+
+
 def run_test(
     settings: Settings, gold: GoldSet, resources: Resources, context: RunContext, milestone: str
 ) -> TestResults:
@@ -423,10 +451,12 @@ def run_test(
     queries = select_queries(gold, Split.TEST)
     evaluate = make_evaluator(resources, queries, score_params(settings))
     cap = decided.chunk_cap
-    chosen = evaluate(RunKey(cap=cap, chunker="structural", spec=decided.pipeline))
+    chosen = evaluate(
+        RunKey(cap=cap, chunker="structural", spec=decided.pipeline, variant=decided.variant)
+    )
     references = tuple(
-        evaluate(RunKey(cap=cap, chunker="structural", spec=spec))
-        for spec in reference_specs(decided.pipeline)
+        evaluate(RunKey(cap=cap, chunker="structural", spec=spec, variant=ref_variant))
+        for spec, ref_variant in comparison_rows(decided)
     )
     rule = Rule(stage="test (report only)", metric="recall@10", free=True)
     comparisons = tuple(

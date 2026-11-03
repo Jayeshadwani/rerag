@@ -9,9 +9,9 @@ raise `ConfigError`; nothing falls back silently.
 
 import tomllib
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -19,7 +19,7 @@ from pydantic_settings import (
 )
 
 from noterecall.index.embeddings import EmbeddingSpec
-from noterecall.retrieval.pipeline import PipelineSpec
+from noterecall.retrieval.pipeline import PipelineSpec, Variant
 from noterecall.retrieval.rerank import RerankSpec
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "default.toml"
@@ -80,6 +80,7 @@ class DecidedConfig(BaseModel):
 
     chunk_cap: int = Field(ge=1)
     pipeline: PipelineSpec
+    variant: Variant = Variant()
 
 
 class RetrievalConfig(BaseModel):
@@ -114,6 +115,38 @@ class RerankConfig(BaseModel):
     model: RerankSpec
 
 
+class PriceConfig(BaseModel):
+    """USD per one million tokens for one model (supplied by the owner, never guessed)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    input: float = Field(ge=0)
+    cached_input: float = Field(ge=0)
+    output: float = Field(ge=0)
+
+
+class LlmConfig(BaseModel):
+    """LLM provider settings (proposal 004). The API key comes from the environment, not here."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider: Literal["openai"]
+    model: str
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+    timeout_s: float = Field(gt=0)
+    max_retries: int = Field(ge=0)
+    concurrency: int = Field(ge=1)
+    max_usd: float = Field(gt=0)
+    cache_path: Path
+    prices: dict[str, PriceConfig]
+
+    @model_validator(mode="after")
+    def _every_model_has_a_price(self) -> Self:
+        if self.model not in self.prices:
+            raise ValueError(f"no [llm.prices] entry for model {self.model!r}")
+        return self
+
+
 class Settings(BaseSettings):
     """Validated application settings."""
 
@@ -129,6 +162,7 @@ class Settings(BaseSettings):
     cleaning: CleaningConfig
     tokenizer: TokenizerConfig
     chunking: ChunkingConfig
+    llm: LlmConfig
     retrieval: RetrievalConfig
     embeddings: EmbeddingsConfig
     rerank: RerankConfig
