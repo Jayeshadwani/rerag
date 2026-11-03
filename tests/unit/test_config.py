@@ -1,10 +1,13 @@
 """Config loading: TOML defaults, env override, strict validation, typed errors."""
 
+import json
 from pathlib import Path
 
 import pytest
 
 from noterecall.config import DEFAULT_CONFIG_PATH, ConfigError, load_settings
+
+ROOT = DEFAULT_CONFIG_PATH.parents[1]
 
 VALID_TOML = """
 [paths]
@@ -263,4 +266,12 @@ def test_default_generation_config_is_pre_registered() -> None:
     generation = load_settings(DEFAULT_CONFIG_PATH).generation
     assert (generation.max_chunks, generation.max_false_refusal_pct) == (6, 5)  # ADR-011, 006
     assert generation.max_output_tokens == 1500
-    assert generation.decided is None  # thresholds are written only after the dev calibration
+    # the thresholds are data-decided: they must be exactly what the committed dev calibration chose
+    results = json.loads((ROOT / "results" / "abstention_calibration_dev.json").read_text())
+    chosen = results["calibration"]["cosine_bm25"]["thresholds"]
+    assert generation.decided is not None
+    assert (generation.decided.cosine, generation.decided.bm25) == (
+        chosen["cosine"],
+        chosen["bm25"],
+    )
+    assert generation.cosine_only == results["calibration"]["cosine_only"]["thresholds"]["cosine"]
