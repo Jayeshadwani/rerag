@@ -19,7 +19,7 @@ from pydantic_settings import (
 )
 
 from noterecall.index.embeddings import EmbeddingSpec
-from noterecall.retrieval.pipeline import PipelineSpec
+from noterecall.retrieval.pipeline import PipelineSpec, Variant
 from noterecall.retrieval.rerank import RerankSpec
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "default.toml"
@@ -80,6 +80,7 @@ class DecidedConfig(BaseModel):
 
     chunk_cap: int = Field(ge=1)
     pipeline: PipelineSpec
+    variant: Variant = Variant()
 
 
 class RetrievalConfig(BaseModel):

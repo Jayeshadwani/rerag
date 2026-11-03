@@ -121,3 +121,31 @@ def apply_clean(
         rejected_by_reason=dict(rejected),
     )
     return out, report
+
+
+def apply_all(
+    notebooks: Sequence[tuple[str, list[Cell]]], answers: Mapping[tuple[str, int], str]
+) -> tuple[list[tuple[str, list[Cell]]], CleanReport]:
+    """`apply_clean` over every notebook (answers keyed by path and cell index), with the
+    reports added together."""
+    out: list[tuple[str, list[Cell]]] = []
+    total = Counter[str]()
+    rejected: Counter[str] = Counter()
+    for path, cells in notebooks:
+        mine = {i: text for (p, i), text in answers.items() if p == path}
+        new_cells, report = apply_clean(cells, mine)
+        out.append((path, new_cells))
+        total.update(
+            cells=report.cells,
+            changed=report.changed,
+            unchanged=report.unchanged,
+            rejected_cells=report.rejected_cells,
+        )
+        rejected.update(report.rejected_by_reason)
+    return out, CleanReport(
+        cells=total["cells"],
+        changed=total["changed"],
+        unchanged=total["unchanged"],
+        rejected_cells=total["rejected_cells"],
+        rejected_by_reason=dict(rejected),
+    )

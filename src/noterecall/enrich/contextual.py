@@ -5,15 +5,15 @@ that notebook so the provider can cache it) and then the chunk, and writes one o
 situating the chunk in the notebook. The sentences are indexed in front of the chunk text. The
 prompt contains only notebook text: never a query and never a gold label. A blurb is a function of
 (model, prompt version, notebook text, chunk text), so answers are looked up in the response cache
-by recomputing the prompt; a missing one is an error that says how to generate it.
+by recomputing the prompt (see `run.read_blurbs`); a missing one is an error that says how to
+generate it.
 """
 
 from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from noterecall.llm.cache import ResponseCache, cache_key
-from noterecall.llm.client import LLMOutputError, Prompt
+from noterecall.llm.client import Prompt
 from noterecall.llm.prompts import PromptTemplate
 from noterecall.models import Cell, Chunk
 
@@ -42,14 +42,3 @@ def blurb_prompt(
 ) -> Prompt:
     """The blurb prompt for one chunk: notebook first, chunk last."""
     return template.render(model, max_output_tokens, notebook=notebook, chunk=chunk.text)
-
-
-def read_blurb(cache: ResponseCache, effort: str, prompt: Prompt) -> str | None:
-    """The cached blurb for a prompt, or None if it was never generated."""
-    stored = cache.get(cache_key(prompt, effort))
-    if stored is None:
-        return None
-    try:
-        return Blurb.model_validate_json(stored.text).context
-    except ValueError as exc:
-        raise LLMOutputError(f"a cached blurb no longer parses: {exc}") from exc

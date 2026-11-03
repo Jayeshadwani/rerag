@@ -5,11 +5,12 @@ vectors are unit length). Exact search over a few thousand vectors takes millise
 perfect recall. Ties break by chunk order, so results are deterministic.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 
 from noterecall.index.embeddings import EmbeddingService
+from noterecall.index.lexical import indexed_text
 from noterecall.models import Chunk, RetrievalHit
 
 
@@ -28,11 +29,16 @@ class DenseIndex:
         self._service = service
 
     @classmethod
-    def build(cls, chunks: Sequence[Chunk], service: EmbeddingService) -> "DenseIndex":
-        """Embed the chunks' text (cached) and keep the matrix."""
+    def build(
+        cls,
+        chunks: Sequence[Chunk],
+        service: EmbeddingService,
+        texts: Mapping[str, str] | None = None,
+    ) -> "DenseIndex":
+        """Embed the chunks' text, or `texts[chunk.id]` where an enriched text is supplied."""
         if not chunks:
             raise DenseError("cannot index zero chunks")
-        matrix = service.embed_passages([c.text for c in chunks])
+        matrix = service.embed_passages([indexed_text(c, texts) for c in chunks])
         return cls([c.id for c in chunks], matrix, service)
 
     def search(self, query: str, k: int) -> list[RetrievalHit]:

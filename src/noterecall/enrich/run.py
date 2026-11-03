@@ -15,8 +15,9 @@ from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict
 
-from noterecall.enrich.contextual import MissingEnrichmentError, blurb_prompt, read_blurb
-from noterecall.llm.cache import ResponseCache
+from noterecall.enrich.contextual import Blurb, MissingEnrichmentError, blurb_prompt
+from noterecall.ingest.llm_clean import CleanedCell
+from noterecall.llm.cache import ResponseCache, cache_key
 from noterecall.llm.client import LLMClient, LLMOutputError, Prompt
 from noterecall.llm.prompts import PromptTemplate
 from noterecall.models import Cell, CellType, Chunk
@@ -64,6 +65,7 @@ def run_groups[K, T: BaseModel](
             counts["cache" if result.from_cache else "api"] += 1
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        finished = False
         try:
             for group in groups:
                 if not group:
@@ -71,9 +73,10 @@ def run_groups[K, T: BaseModel](
                 call(group[0])
                 for future in [pool.submit(call, job) for job in group[1:]]:
                     future.result()
-        except BaseException:
-            pool.shutdown(wait=True, cancel_futures=True)
-            raise
+            finished = True
+        finally:
+            if not finished:  # an error: do not start the jobs still waiting (they cost money)
+                pool.shutdown(wait=True, cancel_futures=True)
     total = sum(len(g) for g in groups)
     summary = RunSummary(
         jobs=total, from_cache=counts["cache"], from_api=counts["api"], failures=dict(failures)
@@ -114,18 +117,41 @@ def clean_groups(
     ]
 
 
-def read_blurbs(jobs: Sequence[Job[str]], cache: ResponseCache, effort: str) -> dict[str, str]:
-    """Blurbs for jobs from the cache; a missing one is an error naming how many are missing."""
-    found: dict[str, str] = {}
+def read_answers[K, T: BaseModel](
+    jobs: Sequence[Job[K]], cache: ResponseCache, effort: str, schema: type[T], what: str
+) -> dict[K, T]:
+    """Parsed answers for jobs from the cache; a missing one is an error naming how many."""
+    found: dict[K, T] = {}
     missing = 0
     for job in jobs:
-        blurb = read_blurb(cache, effort, job.prompt)
-        if blurb is None:
+        stored = cache.get(cache_key(job.prompt, effort))
+        if stored is None:
             missing += 1
-        else:
-            found[job.key] = blurb
+            continue
+        try:
+            found[job.key] = schema.model_validate_json(stored.text)
+        except ValueError as exc:
+            raise LLMOutputError(f"a cached {what} no longer parses: {exc}") from exc
     if missing:
         raise MissingEnrichmentError(
-            f"{missing} of {len(jobs)} blurbs are not in the cache; run `noterecall enrich blurbs`"
+            f"{missing} of {len(jobs)} {what}s are not in the cache; "
+            f"run `noterecall enrich {what_command(what)}`"
         )
     return found
+
+
+def what_command(what: str) -> str:
+    """The CLI sub-command that generates an answer kind."""
+    return {"blurb": "blurbs", "clean": "clean"}[what]
+
+
+def read_blurbs(jobs: Sequence[Job[str]], cache: ResponseCache, effort: str) -> dict[str, str]:
+    """Blurbs for jobs from the cache; a missing one is an error naming how many are missing."""
+    return {k: v.context for k, v in read_answers(jobs, cache, effort, Blurb, "blurb").items()}
+
+
+def read_cleaned(
+    jobs: Sequence[Job[tuple[str, int]]], cache: ResponseCache, effort: str
+) -> dict[tuple[str, int], str]:
+    """Cleaned markdown cells from the cache, keyed (notebook path, cell index)."""
+    return {k: v.text for k, v in read_answers(jobs, cache, effort, CleanedCell, "clean").items()}

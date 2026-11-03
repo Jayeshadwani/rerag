@@ -10,7 +10,8 @@ in, so the whole runner is tested offline with the hash embedder and the overlap
 
 import os
 import platform
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Literal, NamedTuple
 
 import structlog
@@ -20,6 +21,7 @@ from noterecall.chunking.fixed import fixed_chunks
 from noterecall.chunking.structural import chunk_notebook
 from noterecall.chunking.tokens import Tokenizer
 from noterecall.config import DecidedConfig, Settings
+from noterecall.enrich.headers import index_text
 from noterecall.eval.ablation import (
     Ablation,
     AblationParams,
@@ -44,7 +46,13 @@ from noterecall.index.lexical import LexicalIndex
 from noterecall.ingest.stats import GitState
 from noterecall.models import Cell, Chunk
 from noterecall.retrieval.dense import DenseIndex
-from noterecall.retrieval.pipeline import Components, Depths, PipelineSpec, RetrievalPipeline
+from noterecall.retrieval.pipeline import (
+    Components,
+    Depths,
+    PipelineSpec,
+    RetrievalPipeline,
+    Variant,
+)
 from noterecall.retrieval.rerank import Reranker
 
 log = structlog.get_logger()
@@ -52,6 +60,7 @@ log = structlog.get_logger()
 SEED = 20261029
 KS = (5, 10)
 Notebooks = Sequence[tuple[str, list[Cell]]]
+BlurbSource = Callable[[bool, Sequence[Chunk]], Mapping[str, str]]
 
 
 class RunError(Exception):
@@ -96,57 +105,97 @@ def build_chunks(
     return chunks
 
 
-class Resources:
-    """Builds corpora, indexes and pipelines on demand and keeps them (each is expensive)."""
+@dataclass(frozen=True)
+class Enrichment:
+    """What the M5 variants need beyond the plain notebooks: the LLM-cleaned notebooks and a
+    source of blurbs (either may be absent when the matching variant is not run)."""
 
-    def __init__(
+    cleaned: Notebooks | None = None
+    blurbs: BlurbSource | None = None
+
+
+class Resources:
+    """Builds corpora, indexes and pipelines on demand and keeps them (each is expensive).
+
+    For the enrichment ablation (M5) it also holds the LLM-cleaned notebooks and a source of
+    blurbs; a variant that needs one that was not supplied is an error, never a silent fallback.
+    """
+
+    def __init__(  # noqa: PLR0913 - the M4 resources plus the optional M5 bundle
         self,
         notebooks: Notebooks,
         tokenizer: Tokenizer,
         services: Mapping[str, EmbeddingService],
         reranker: Reranker,
         depths: Depths,
+        *,
+        enrichment: Enrichment | None = None,
     ) -> None:
+        enrichment = enrichment or Enrichment()
         self._notebooks = notebooks
+        self._cleaned = enrichment.cleaned
+        self._blurbs = enrichment.blurbs
         self._tokenizer = tokenizer
         self.services = services
         self.reranker = reranker
         self._depths = depths
-        self._chunks: dict[tuple[int, Chunker], list[Chunk]] = {}
-        self._lexical: dict[tuple[int, Chunker, str], LexicalIndex] = {}
-        self._dense: dict[tuple[int, Chunker, str], DenseIndex] = {}
-        self._coverage: CoverageIndex | None = None
+        self._chunks: dict[tuple[int, Chunker, bool], list[Chunk]] = {}
+        self._lexical: dict[tuple[int, Chunker, str, Variant], LexicalIndex] = {}
+        self._dense: dict[tuple[int, Chunker, str, Variant], DenseIndex] = {}
+        self._coverage: dict[bool, CoverageIndex] = {}
 
-    def chunks(self, cap: int, chunker: Chunker) -> list[Chunk]:
-        if (cap, chunker) not in self._chunks:
-            self._chunks[(cap, chunker)] = build_chunks(
-                self._notebooks, cap, chunker, self._tokenizer
+    def _corpus(self, clean: bool) -> Notebooks:
+        if not clean:
+            return self._notebooks
+        if self._cleaned is None:
+            raise RunError("the cleaned notebooks were not supplied; run `noterecall enrich clean`")
+        return self._cleaned
+
+    def chunks(self, cap: int, chunker: Chunker, clean: bool = False) -> list[Chunk]:
+        if (cap, chunker, clean) not in self._chunks:
+            self._chunks[(cap, chunker, clean)] = build_chunks(
+                self._corpus(clean), cap, chunker, self._tokenizer
             )
-        return self._chunks[(cap, chunker)]
+        return self._chunks[(cap, chunker, clean)]
+
+    def indexed_texts(self, key: RunKey) -> dict[str, str] | None:
+        """The text each chunk is indexed under, or None for the plain chunk text."""
+        variant = key.variant
+        if not (variant.header or variant.blurb):
+            return None
+        chunks = self.chunks(key.cap, key.chunker, variant.clean)
+        blurbs: Mapping[str, str] = {}
+        if variant.blurb:
+            if self._blurbs is None:
+                raise RunError("no blurb source was supplied for a blurb variant")
+            blurbs = self._blurbs(variant.clean, chunks)
+        return {c.id: index_text(c, variant.header, blurbs.get(c.id)) for c in chunks}
 
     def pipeline(self, key: RunKey) -> RetrievalPipeline:
-        chunks = self.chunks(key.cap, key.chunker)
-        spec, parts = key.spec, Components()
+        chunks = self.chunks(key.cap, key.chunker, key.variant.clean)
+        spec = key.spec
+        texts = self.indexed_texts(key)
         lexical = dense = None
         if spec.lexical is not None:
-            lk = (key.cap, key.chunker, spec.lexical)
+            lk = (key.cap, key.chunker, spec.lexical, key.variant)
             if lk not in self._lexical:
                 tokenize = tokenize_code if spec.lexical == "code" else tokenize_plain
-                self._lexical[lk] = LexicalIndex.build(chunks, tokenize)
+                self._lexical[lk] = LexicalIndex.build(chunks, tokenize, texts)
             lexical = self._lexical[lk]
         if spec.dense_model is not None:
-            dk = (key.cap, key.chunker, spec.dense_model)
+            dk = (key.cap, key.chunker, spec.dense_model, key.variant)
             if dk not in self._dense:
-                self._dense[dk] = DenseIndex.build(chunks, self._service(spec.dense_model))
+                service = self._service(spec.dense_model)
+                self._dense[dk] = DenseIndex.build(chunks, service, texts)
             dense = self._dense[dk]
         parts = Components(lexical=lexical, dense=dense, reranker=self.reranker)
         return RetrievalPipeline(spec, {c.id: c for c in chunks}, self._depths, parts)
 
-    def coverage(self) -> CoverageIndex:
+    def coverage(self, clean: bool = False) -> CoverageIndex:
         """Token counts of every cell, for the secondary token-coverage metric."""
-        if self._coverage is None:
-            self._coverage = CoverageIndex(self._notebooks, self._tokenizer)
-        return self._coverage
+        if clean not in self._coverage:
+            self._coverage[clean] = CoverageIndex(self._corpus(clean), self._tokenizer)
+        return self._coverage[clean]
 
     def _service(self, model: str) -> EmbeddingService:
         if model not in self.services:
@@ -170,8 +219,8 @@ def make_evaluator(
 
     def evaluate(key: RunKey) -> ConfigResult:
         pipeline = resources.pipeline(key)
-        coverage = resources.coverage()
-        chunks = resources.chunks(key.cap, key.chunker)
+        coverage = resources.coverage(key.variant.clean)
+        chunks = resources.chunks(key.cap, key.chunker, key.variant.clean)
         by_id = {c.id: c for c in chunks}
         pipeline.retrieve(queries[0].text)  # warm-up: models loaded, caches filled, not timed
         per_query: dict[str, dict[str, float]] = {}

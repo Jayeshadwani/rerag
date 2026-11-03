@@ -20,7 +20,6 @@ from noterecall.enrich.contextual import (
     MissingEnrichmentError,
     blurb_prompt,
     notebook_text,
-    read_blurb,
 )
 from noterecall.enrich.estimate import estimate_step
 from noterecall.enrich.headers import chunk_header, clean_heading, index_text, notebook_title
@@ -34,8 +33,14 @@ from noterecall.ingest.llm_clean import (
     protected_tokens,
     verify_clean,
 )
-from noterecall.llm.cache import ResponseCache, cache_key
-from noterecall.llm.client import BudgetExceededError, LLMCallError, Prompt
+from noterecall.llm.cache import ResponseCache, Stored, cache_key
+from noterecall.llm.client import (
+    BudgetExceededError,
+    LLMCallError,
+    LLMOutputError,
+    Prompt,
+    Usage,
+)
 from noterecall.llm.cost import CostMeter
 from noterecall.llm.fake import FakeTransport, Responder
 from noterecall.llm.prompts import load_prompt
@@ -122,20 +127,30 @@ def test_blurb_schema_rejects_empty_extra_and_overlong_answers() -> None:
             Blurb.model_validate_json(bad)
 
 
-def test_read_blurb_finds_stored_answers_and_reports_missing_ones(tmp_path: Path) -> None:
+def test_read_blurbs_returns_stored_answers_and_distinguishes_effort(tmp_path: Path) -> None:
     template = load_prompt("contextual_blurb")
-    p = blurb_prompt(template, "m", 80, "nb", chunk(text="c"))
+    job = Job("k", blurb_prompt(template, "m", 80, "nb", chunk(text="c")))
+    cache = ResponseCache(tmp_path / "c.sqlite")
     client = CachingClient(
         FakeTransport(lambda _p: '{"context": "situated"}'),
-        ResponseCache(tmp_path / "c.sqlite"),
+        cache,
         CostMeter({"m": PRICE}, 1.0),
         "minimal",
     )
+    with pytest.raises(MissingEnrichmentError):
+        read_blurbs([job], cache, "minimal")
+    client.complete_json(job.prompt, Blurb)
+    assert read_blurbs([job], cache, "minimal") == {"k": "situated"}
+    with pytest.raises(MissingEnrichmentError):
+        read_blurbs([job], cache, "low")  # another effort is another answer
+
+
+def test_a_stored_answer_that_no_longer_parses_is_an_error(tmp_path: Path) -> None:
+    job = Job("k", blurb_prompt(load_prompt("contextual_blurb"), "m", 80, "nb", chunk(text="c")))
     cache = ResponseCache(tmp_path / "c.sqlite")
-    assert read_blurb(cache, "minimal", p) is None
-    client.complete_json(p, Blurb)
-    assert read_blurb(cache, "minimal", p) == "situated"
-    assert read_blurb(cache, "low", p) is None  # another effort is another answer
+    cache.put(cache_key(job.prompt, "minimal"), job.prompt, Stored('{"context": ""}', Usage(), 0.0))
+    with pytest.raises(LLMOutputError, match="no longer parses"):
+        read_blurbs([job], cache, "minimal")
 
 
 def test_read_blurbs_names_how_many_are_missing(tmp_path: Path) -> None:

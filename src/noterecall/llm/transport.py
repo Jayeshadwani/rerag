@@ -61,8 +61,8 @@ class CachingClient:
         self._meter.check()
         start = time.perf_counter()
         raw = self._transport.complete_text(prompt, schema.__name__, schema.model_json_schema())
+        self._meter.add(prompt.model, raw.usage)  # an unusable answer was still paid for
         parsed = self._parse(raw.text, schema)  # raises before anything is stored
-        self._meter.add(prompt.model, raw.usage)
         self._cache.put(key, prompt, Stored(raw.text, raw.usage, raw.latency_s))
         self._log(prompt, raw.usage, raw.latency_s, from_cache=False, attempts=raw.attempts)
         return LLMResult(

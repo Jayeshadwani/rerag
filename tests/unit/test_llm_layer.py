@@ -20,7 +20,7 @@ from noterecall.llm.client import (
 )
 from noterecall.llm.cost import CostMeter, cost_usd, ledger_cost
 from noterecall.llm.fake import FakeTransport, Responder, count_words
-from noterecall.llm.openai_client import OpenAITransport, create_transport, scrub
+from noterecall.llm.openai_client import OpenAITransport, create_transport, scrub, strict_schema
 from noterecall.llm.prompts import PROMPT_DIR, PromptFileError, load_prompt
 from noterecall.llm.transport import CachingClient
 
@@ -215,12 +215,11 @@ def test_every_call_logs_what_the_rules_require(tmp_path: Path) -> None:
     } <= set(first)
 
 
-def test_an_unusable_answer_is_raised_not_cached_and_not_charged(tmp_path: Path) -> None:
-    client, transport, cache, meter = make_client(tmp_path, responder=lambda p: '{"wrong": 1}')
+def test_an_unusable_answer_is_raised_and_not_cached(tmp_path: Path) -> None:
+    client, transport, cache, _meter = make_client(tmp_path, responder=lambda p: '{"wrong": 1}')
     with pytest.raises(LLMOutputError, match="does not match Answer"):
         client.complete_json(prompt(), Answer)
     assert cache.get(cache_key(prompt(), "minimal")) is None
-    assert meter.spent_usd == 0.0
     with pytest.raises(LLMOutputError):
         client.complete_json(prompt(), Answer)
     assert len(transport.prompts) == 2  # asked again, because nothing was cached
@@ -420,3 +419,33 @@ def test_create_transport_needs_the_key_in_the_environment(monkeypatch: pytest.M
         create_transport("minimal", 5.0, 3)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
     assert isinstance(create_transport("minimal", 5.0, 3), OpenAITransport)  # builds, no network
+
+
+def test_strict_schema_drops_local_only_keywords_but_keeps_field_names() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "context": {"type": "string", "minLength": 1, "maxLength": 600},
+            "format": {"type": "integer", "minimum": 0},
+            "items": {"type": "array", "items": {"type": "string", "pattern": "x"}},
+        },
+        "required": ["context"],
+    }
+    assert strict_schema(schema) == {
+        "type": "object",
+        "properties": {
+            "context": {"type": "string"},
+            "format": {"type": "integer"},
+            "items": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["context"],
+    }
+    assert schema["properties"]["context"]["maxLength"] == 600  # type: ignore[index]  # untouched
+
+
+def test_an_unusable_answer_is_still_counted_as_spend(tmp_path: Path) -> None:
+    client, _t, cache, meter = make_client(tmp_path, lambda _p: "not json")
+    with pytest.raises(LLMOutputError):
+        client.complete_json(prompt(), Answer)
+    assert meter.spent_usd > 0  # the call was paid for
+    assert cache.spend() == []  # but nothing unusable is stored as an answer

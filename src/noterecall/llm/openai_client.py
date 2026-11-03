@@ -72,6 +72,33 @@ class ResponsesLike(Protocol):
     ) -> _ResponseLike: ...
 
 
+_LOCAL_ONLY_KEYWORDS = ("minLength", "maxLength", "minimum", "maximum", "pattern", "format")
+
+
+def strict_schema(node: object) -> object:
+    """The JSON Schema as sent to the API: length and range keywords removed.
+
+    Strict structured outputs support only a subset of JSON Schema. The removed keywords are
+    still enforced here, because every answer is parsed into the pydantic model afterwards.
+    """
+    if isinstance(node, dict):
+        return {
+            k: _property_map(v) if k == "properties" else strict_schema(v)
+            for k, v in node.items()
+            if k not in _LOCAL_ONLY_KEYWORDS
+        }
+    if isinstance(node, list):
+        return [strict_schema(v) for v in node]
+    return node
+
+
+def _property_map(node: object) -> object:
+    """A `properties` map: its keys are field names (kept even if named like a keyword)."""
+    if isinstance(node, dict):
+        return {name: strict_schema(sub) for name, sub in node.items()}
+    return node
+
+
 def scrub(message: str, secret: str | None) -> str:
     """Remove the API key (and anything shaped like a partial key echo) from a message."""
     if secret:
@@ -142,7 +169,7 @@ class OpenAITransport:
                 "format": {
                     "type": "json_schema",
                     "name": schema_name,
-                    "schema": schema_json,
+                    "schema": strict_schema(schema_json),
                     "strict": True,
                 }
             },
