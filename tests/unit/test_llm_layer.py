@@ -455,3 +455,12 @@ def test_an_unusable_answer_is_still_counted_as_spend(tmp_path: Path) -> None:
         client.complete_json(prompt(), Answer)
     assert meter.spent_usd > 0  # the call was paid for
     assert cache.spend() == []  # but nothing unusable is stored as an answer
+
+
+def test_a_value_that_looks_like_a_placeholder_is_not_substituted_again(tmp_path: Path) -> None:
+    (tmp_path / "z.md").write_text(
+        "## instructions\ni\n\n## variable\n{{notes}} | {{question}} | {{unknown}}\n",
+        encoding="utf-8",
+    )
+    rendered = load_prompt("z", tmp_path).render("m", 5, notes="see {{question}}", question="Q")
+    assert rendered.variable == "see {{question}} | Q | {{unknown}}"

@@ -9,12 +9,14 @@ so editing a prompt changes the cache key of every call that used it.
 """
 
 import hashlib
+import re
 from pathlib import Path
 
 from noterecall.llm.client import LLMError, Prompt
 
 PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 SECTIONS = ("instructions", "shared", "variable")
+_PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
 
 
 class PromptFileError(LLMError):
@@ -44,9 +46,9 @@ class PromptTemplate:
 
     @staticmethod
     def _fill(text: str, values: dict[str, str]) -> str:
-        for key, value in values.items():
-            text = text.replace("{{" + key + "}}", value)
-        return text
+        """Replace every known placeholder in one pass, so a value that itself contains a
+        placeholder (a note quoting `{{question}}`) is never substituted a second time."""
+        return _PLACEHOLDER.sub(lambda m: values.get(m.group(1), m.group(0)), text)
 
 
 def load_prompt(name: str, directory: Path = PROMPT_DIR) -> PromptTemplate:

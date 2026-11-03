@@ -102,6 +102,11 @@ input = 1.0
 cached_input = 0.1
 output = 4.0
 
+[generation]
+max_chunks = 2
+max_output_tokens = 300
+max_false_refusal_pct = 5
+
 [retrieval]
 candidate_depth = 5
 fused_depth = 3

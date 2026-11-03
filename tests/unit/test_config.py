@@ -41,6 +41,11 @@ input = 1.0
 cached_input = 0.1
 output = 4.0
 
+[generation]
+max_chunks = 2
+max_output_tokens = 300
+max_false_refusal_pct = 5
+
 [retrieval]
 candidate_depth = 5
 fused_depth = 3
@@ -249,6 +254,13 @@ def test_llm_section_loads_and_every_model_needs_a_price(tmp_path: Path) -> None
 
 def test_default_llm_config_matches_the_owner_decisions() -> None:
     llm = load_settings(DEFAULT_CONFIG_PATH).llm
-    assert (llm.model, llm.max_usd) == ("gpt-5-mini", 10.0)
+    assert (llm.model, llm.max_usd) == ("gpt-5-mini", 2.0)  # M6 cap, owner decision
     price = llm.prices["gpt-5-mini"]
     assert (price.input, price.cached_input, price.output) == (0.25, 0.025, 2.0)
+
+
+def test_default_generation_config_is_pre_registered() -> None:
+    generation = load_settings(DEFAULT_CONFIG_PATH).generation
+    assert (generation.max_chunks, generation.max_false_refusal_pct) == (6, 5)  # ADR-011, 006
+    assert generation.max_output_tokens == 1500
+    assert generation.decided is None  # thresholds are written only after the dev calibration

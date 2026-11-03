@@ -2,7 +2,7 @@
 notebooks (in memory only) and offline resources (hash embedder, overlap reranker)."""
 
 from noterecall.chunking.tokens import Tokenizer
-from noterecall.config import Settings
+from noterecall.config import DecidedConfig, DecidedThresholds, Settings
 from noterecall.eval.gold import (
     CellRef,
     GoldQuery,
@@ -14,7 +14,7 @@ from noterecall.eval.run_retrieval import Resources, RunContext
 from noterecall.index.embeddings import EmbeddingService, HashEmbedder
 from noterecall.ingest.stats import GitState
 from noterecall.models import Cell
-from noterecall.retrieval.pipeline import Depths
+from noterecall.retrieval.pipeline import Depths, PipelineSpec, Variant
 from noterecall.retrieval.rerank import OverlapReranker
 
 MARKER = "ZEBRAMARK"
@@ -58,3 +58,27 @@ def make_resources(
         candidate=settings.retrieval.candidate_depth, fused=settings.retrieval.fused_depth
     )
     return Resources(notebooks, tok, services, OverlapReranker(), depths)
+
+
+def decided_settings(
+    settings: Settings,
+    thresholds: tuple[float, float] | None = None,
+    variant: Variant | None = None,
+) -> Settings:
+    """Settings with the M4/M5 decisions (hybrid at cap 64, small model) and, if given, the
+    shipped stage-1 thresholds (cosine, BM25) and the cosine-only reference threshold."""
+    decided = DecidedConfig(
+        chunk_cap=64,
+        pipeline=PipelineSpec(lexical="code", dense_model="small", rrf_k=60),
+        variant=variant or Variant(),
+    )
+    retrieval = settings.retrieval.model_copy(update={"decided": decided})
+    generation = settings.generation
+    if thresholds is not None:
+        generation = generation.model_copy(
+            update={
+                "decided": DecidedThresholds(cosine=thresholds[0], bm25=thresholds[1]),
+                "cosine_only": thresholds[0],
+            }
+        )
+    return settings.model_copy(update={"retrieval": retrieval, "generation": generation})

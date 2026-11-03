@@ -99,6 +99,27 @@ class RetrievalConfig(BaseModel):
     decided: DecidedConfig | None = None
 
 
+class DecidedThresholds(BaseModel):
+    """Data-decided M6 values (proposal 006): written only after the calibration results file."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    cosine: float
+    bm25: float
+
+
+class GenerationConfig(BaseModel):
+    """Grounded Q&A parameters (ADR-011, proposal 006). All but `decided` are pre-registered."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_chunks: int = Field(ge=1)
+    max_output_tokens: int = Field(ge=1)
+    max_false_refusal_pct: int = Field(ge=0, le=100)
+    decided: DecidedThresholds | None = None
+    cosine_only: float | None = None  # tau_cos of the "cosine only" reference row
+
+
 class EmbeddingsConfig(BaseModel):
     """Candidate embedding models, smallest first (the first is the ADR-010 baseline)."""
 
@@ -164,6 +185,7 @@ class Settings(BaseSettings):
     chunking: ChunkingConfig
     llm: LlmConfig
     retrieval: RetrievalConfig
+    generation: GenerationConfig
     embeddings: EmbeddingsConfig
     rerank: RerankConfig
 

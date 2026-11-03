@@ -18,7 +18,7 @@ import typer
 
 from noterecall.chunking.report import compute_chunk_stats
 from noterecall.chunking.tokens import TokenizerError, load_tokenizer
-from noterecall.config import ConfigError, DecidedConfig, Settings, load_settings
+from noterecall.config import ConfigError, DecidedConfig, PriceConfig, Settings, load_settings
 from noterecall.eval.gold import (
     CellRef,
     GoldError,
@@ -43,14 +43,39 @@ from noterecall.eval.ledger import (
     read_ledger,
     record_run,
 )
+from noterecall.eval.run_generation import (
+    GenerationResults,
+    decided_pipeline,
+    run_calibration,
+    run_generation,
+    select_all,
+)
 from noterecall.eval.run_header import HeaderDevResults, run_header_dev
 from noterecall.eval.run_retrieval import (
     DevResults,
+    QueryRef,
     Resources,
     RunContext,
     RunError,
     run_dev,
     run_test,
+)
+from noterecall.generate.abstain import Choice, Thresholds
+from noterecall.generate.ask import Asker
+from noterecall.generate.commands import format_answer, format_context, format_plan, plan_generation
+from noterecall.generate.runtime import (
+    NoCalls,
+    build_client,
+    build_generator,
+    model_tokenizer,
+    spent_so_far,
+)
+from noterecall.generate.smoke import (
+    SMOKE_CAP_USD,
+    choose_step_b,
+    format_rows,
+    run_step_a,
+    smoke_row,
 )
 from noterecall.index.embeddings import EmbeddingService
 from noterecall.index.st_models import load_cross_encoder, load_embedder
@@ -73,9 +98,12 @@ from noterecall.ingest.sync import (
 from noterecall.ingest.sync import (
     sync as run_sync,
 )
+from noterecall.llm.cache import ResponseCache
+from noterecall.llm.client import LLMError
 from noterecall.retrieval.pipeline import Depths
 
 KNOWN_ERRORS = (
+    LLMError,
     ConfigError,
     GoldError,
     LedgerError,
@@ -532,6 +560,8 @@ class Suite(StrEnum):
 
     RETRIEVAL = "retrieval"
     HEADER = "header"
+    ABSTENTION = "abstention"
+    GENERATION = "generation"
 
 
 def _eval_header_dev(settings: Settings, out: Path | None) -> str:
@@ -555,8 +585,129 @@ def _eval_header_dev(settings: Settings, out: Path | None) -> str:
     return f"eval: wrote {target}"
 
 
+def _dense_models(settings: Settings) -> set[str]:
+    decided = settings.retrieval.decided
+    if decided is None:
+        raise RunError("config has no [retrieval.decided]; M6 builds on the M4/M5 decisions")
+    return {decided.pipeline.dense_model} if decided.pipeline.dense_model else set()
+
+
+def _eval_abstention_dev(settings: Settings, out: Path | None) -> str:
+    gold = load_gold(settings.paths.gold_path)
+    conn = connect(settings.paths.db_path)
+    try:
+        results = run_calibration(
+            settings,
+            gold,
+            _resources(settings, conn, _dense_models(settings)),
+            RunContext(git=git_state(), versions=_versions()),
+        )
+    finally:
+        conn.close()
+    target = (
+        out if out is not None else settings.paths.results_dir / "abstention_calibration_dev.json"
+    )
+    _write_json(target, results.model_dump_json(indent=2))
+    cal = results.calibration
+    lines = [f"eval: wrote {target}"]
+    lines.append(_describe_choice("cosine + BM25", cal.cosine_bm25))
+    lines.append(_describe_choice("cosine only", cal.cosine_only))
+    return "\n".join(lines)
+
+
+def _describe_choice(label: str, choice: Choice) -> str:
+    t, m = choice.thresholds, choice.metrics
+    return (
+        f"  {label}: tau_cos {t.cosine:.4f}, tau_bm25 {t.bm25:.4f}: caught "
+        f"{m.caught}/{m.unanswerable} unanswerable, "
+        f"{m.false_refusals}/{m.answerable} false refusals"
+    )
+
+
+def _asker(settings: Settings, resources: Resources, cache: ResponseCache, real: bool) -> Asker:
+    """An asker on the decided pipeline; `real` is False for estimates (no API client)."""
+    thresholds = settings.generation.decided
+    if thresholds is None:
+        raise RunError("config has no [generation.decided]; run and commit the dev calibration")
+    pipeline, cap = decided_pipeline(settings, resources)
+    chunks = {c.id: c for c in resources.chunks(cap, "structural")}
+    generator = build_generator(settings, build_client(settings, cache) if real else NoCalls())
+    return Asker(
+        pipeline,
+        chunks,
+        Thresholds(cosine=thresholds.cosine, bm25=thresholds.bm25),
+        generator,
+        settings.generation.max_chunks,
+    )
+
+
+def _generation_plan(
+    settings: Settings, resources: Resources, cache: ResponseCache, queries: list[QueryRef]
+) -> str:
+    """The dry-run text for answering these queries (no API client is built)."""
+    planner = _asker(settings, resources, cache, real=False)
+    counter = model_tokenizer(settings.llm.model).count
+    refused, estimate = plan_generation(planner, planner.generator, queries, settings, counter)
+    spent = spent_so_far(settings, cache)
+    return format_plan(refused, len(queries), estimate, spent, settings.llm.max_usd)
+
+
+def _save_generation(
+    settings: Settings, results: GenerationResults, milestone: str | None, out: Path | None
+) -> str:
+    split = results.meta.split
+    name = "generation_dev.json" if split is Split.DEV else f"generation_test_{milestone}.json"
+    target = out if out is not None else settings.paths.results_dir / name
+    _write_json(target, results.model_dump_json(indent=2))
+    if split is Split.TEST and milestone is not None:
+        git = results.meta.git
+        entry = LedgerEntry(
+            milestone=milestone,
+            git_sha=git.sha,
+            results_file=target.name,
+            results_sha256=file_sha256(target),
+        )
+        record_run(settings.paths.results_dir / "test_ledger.json", entry)
+    return f"eval: wrote {target} (cost ${results.total_cost_usd:.4f})"
+
+
+def _eval_generation(
+    settings: Settings,
+    split: Split,
+    milestone: str | None,
+    out: Path | None,
+    mode: tuple[bool, bool],
+) -> str:
+    dry_run, confirmed = mode
+    gold = load_gold(settings.paths.gold_path)
+    git = git_state()
+    if split is Split.TEST and not dry_run:
+        if milestone is None:
+            raise RunError(
+                "--split test needs --milestone (the test split runs once per milestone)"
+            )
+        ledger = read_ledger(settings.paths.results_dir / "test_ledger.json")
+        check_test_allowed(ledger, milestone, git.dirty, gold.frozen)
+    conn = connect(settings.paths.db_path)
+    cache = ResponseCache(settings.llm.cache_path)
+    try:
+        resources = _resources(settings, conn, _dense_models(settings))
+        if dry_run or not confirmed:
+            plan = _generation_plan(settings, resources, cache, select_all(gold, split))
+            if dry_run:
+                return plan
+            raise RunError(f"{plan}\n\nno call was made: re-run with --yes to run this")
+        generator = _asker(settings, resources, cache, real=True).generator
+        context = RunContext(git=git, versions=_versions())
+        results = run_generation(settings, gold, resources, context, generator, split)
+    finally:
+        cache.close()
+        conn.close()
+    return _save_generation(settings, results, milestone, out)
+
+
 @app.command("eval")
-def eval_command(
+def eval_command(  # noqa: PLR0913, PLR0917 - the options of one CLI command
     config: ConfigOption = None,
     split: Annotated[
         Split, typer.Option("--split", help="dev runs the ablation; test runs once.")
@@ -566,25 +717,122 @@ def eval_command(
     ] = None,
     out: Annotated[Path | None, typer.Option("--out", help="Output JSON path.")] = None,
     suite: Annotated[
-        Suite, typer.Option("--suite", help="retrieval (M4) or header (M5, dev only).")
+        Suite,
+        typer.Option("--suite", help="retrieval (M4), header (M5), abstention or generation (M6)."),
     ] = Suite.RETRIEVAL,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="generation: print the estimate, no API call.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="generation: accept the estimate and call the API.")
+    ] = False,
 ) -> None:
-    """Run the ablation on dev, or the decided configuration once on test."""
+    """Run an evaluation: the dev ablation, or the decided configuration once on test."""
     try:
         settings = _settings(config)
-        if suite is Suite.HEADER and split is Split.TEST:
-            raise RunError("the header row is a dev report; use --suite retrieval for test")
-        if split is Split.DEV:
-            typer.echo(
-                _eval_header_dev(settings, out)
-                if suite is Suite.HEADER
-                else _eval_dev(settings, out)
-            )
-        else:
-            if milestone is None:
-                raise RunError(
-                    "--split test needs --milestone (the test split runs once per milestone)"
-                )
-            typer.echo(_eval_test(settings, milestone, out))
+        typer.echo(_dispatch_eval(settings, suite, split, milestone, out, (dry_run, yes)))
     except KNOWN_ERRORS as exc:
         raise _fail(exc) from exc
+
+
+def _dispatch_eval(  # noqa: PLR0913, PLR0917 - one value per command-line option
+    settings: Settings,
+    suite: Suite,
+    split: Split,
+    milestone: str | None,
+    out: Path | None,
+    mode: tuple[bool, bool],
+) -> str:
+    if suite is Suite.GENERATION:
+        return _eval_generation(settings, split, milestone, out, mode)
+    if suite in (Suite.HEADER, Suite.ABSTENTION):
+        if split is Split.TEST:
+            raise RunError(f"--suite {suite.value} is a dev report; there is no test run")
+        run = _eval_header_dev if suite is Suite.HEADER else _eval_abstention_dev
+        return run(settings, out)
+    if split is Split.DEV:
+        return _eval_dev(settings, out)
+    if milestone is None:
+        raise RunError("--split test needs --milestone (the test split runs once per milestone)")
+    return _eval_test(settings, milestone, out)
+
+
+@app.command()
+def ask(
+    question: Annotated[str, typer.Argument(help="Your question about your notes.")],
+    config: ConfigOption = None,
+    show_context: Annotated[
+        bool, typer.Option("--show-context", help="Also print the signals and the context chunks.")
+    ] = False,
+) -> None:
+    """Answer a question from your notes, with citations, or say it is not in them."""
+    try:
+        settings = _settings(config)
+        typer.echo(_ask(settings, question, show_context))
+    except KNOWN_ERRORS as exc:
+        raise _fail(exc) from exc
+
+
+def _ask(settings: Settings, question: str, show_context: bool) -> str:
+    conn = connect(settings.paths.db_path)
+    cache = ResponseCache(settings.llm.cache_path)
+    try:
+        resources = _resources(settings, conn, _dense_models(settings))
+        asker = _asker(settings, resources, cache, real=True)
+        result = asker.ask(question)
+        decided = settings.retrieval.decided
+        chunks = (
+            {c.id: c for c in resources.chunks(decided.chunk_cap, "structural")} if decided else {}
+        )
+    finally:
+        cache.close()
+        conn.close()
+    text = format_answer(result, chunks)
+    return f"{format_context(result, chunks)}\n\n{text}" if show_context else text
+
+
+@app.command("smoke-answer")
+def smoke_answer(
+    step: Annotated[str, typer.Option("--step", help="a: invented chunks; b: 3 dev queries.")],
+    config: ConfigOption = None,
+) -> None:
+    """Real-API smoke test with a $0.05 cap: shows token usage and cost (owner's pre-flight)."""
+    try:
+        typer.echo(_smoke(_settings(config), step))
+    except KNOWN_ERRORS as exc:
+        raise _fail(exc) from exc
+
+
+def _smoke(settings: Settings, step: str) -> str:
+    if step not in ("a", "b"):
+        raise RunError("--step must be a or b")
+    price = settings.llm.prices[settings.llm.model]
+    conn = connect(settings.paths.db_path)
+    cache = ResponseCache(settings.llm.cache_path)
+    capped_llm = settings.llm.model_copy(
+        update={"max_usd": spent_so_far(settings, cache) + SMOKE_CAP_USD}
+    )
+    capped = settings.model_copy(update={"llm": capped_llm})
+    try:
+        if step == "a":
+            row = run_step_a(build_generator(capped, build_client(capped, cache)), price)
+            return format_rows([row])
+        return _smoke_step_b(capped, conn, cache, price)
+    finally:
+        cache.close()
+        conn.close()
+
+
+def _smoke_step_b(
+    settings: Settings, conn: sqlite3.Connection, cache: ResponseCache, price: PriceConfig
+) -> str:
+    gold = load_gold(settings.paths.gold_path)
+    resources = _resources(settings, conn, _dense_models(settings))
+    asker = _asker(settings, resources, cache, real=True)
+    queries = select_all(gold, Split.DEV)
+    refusals = []
+    for q in queries:
+        _chunks, signals = asker.context_for(q.text)
+        refusals.append((q, asker.stage1_refuses(signals)))
+    rows = [smoke_row(q.id, asker.ask(q.text).response, price) for q in choose_step_b(refusals)]
+    return format_rows(rows)

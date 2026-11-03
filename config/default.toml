@@ -67,8 +67,8 @@ reasoning_effort = "minimal"
 timeout_s = 120.0
 max_retries = 3
 concurrency = 4
-# Hard stop: no call is made once the money actually spent reaches this.
-max_usd = 10.0
+# Hard stop: no call is made once the money actually spent reaches this (M6: $2, owner decision).
+max_usd = 2.0
 cache_path = "data/llm_cache.sqlite"
 
 # USD per 1M tokens, supplied by the owner.
@@ -94,3 +94,11 @@ rerank = false
 # (proposal 005).
 [retrieval.decided.variant]
 header = true
+
+# Grounded Q&A (ADR-011 as amended by proposals 003 and 006). Pre-registered, not tuned: at most 6
+# chunks in context (ADR-011); a false-refusal bound of 5% on answerable queries for the stage-1
+# calibration (proposal 006); an output cap that includes reasoning tokens.
+[generation]
+max_chunks = 6
+max_output_tokens = 1500
+max_false_refusal_pct = 5

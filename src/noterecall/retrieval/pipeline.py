@@ -60,6 +60,16 @@ class Depths(BaseModel):
     fused: int
 
 
+class AbstentionSignals(BaseModel):
+    """What stage 1 of abstention reads (ADR-011, proposal 006): the top dense cosine similarity
+    and the top BM25 score divided by the number of query tokens (0 when there is no match)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    top_cosine: float
+    bm25_norm: float
+
+
 class StageTimes(BaseModel):
     """Wall-clock milliseconds per stage for one query (0 for a stage that did not run)."""
 
@@ -112,6 +122,19 @@ class RetrievalPipeline:
 
     def retrieve(self, query: str) -> tuple[list[RetrievalHit], StageTimes]:
         """Ranked hits for the query and how long each stage took."""
+        hits, times, _signals = self._run(query)
+        return hits, times
+
+    def retrieve_with_signals(self, query: str) -> tuple[list[RetrievalHit], AbstentionSignals]:
+        """Ranked hits plus the two stage-1 abstention signals. Needs both retrievers."""
+        if self._lexical is None or self._dense is None:
+            raise PipelineError("abstention signals need both the lexical and the dense index")
+        hits, _times, signals = self._run(query)
+        if signals is None:
+            raise PipelineError("the dense index returned no hits")
+        return hits, signals
+
+    def _run(self, query: str) -> tuple[list[RetrievalHit], StageTimes, AbstentionSignals | None]:
         start = time.perf_counter()
         lexical_hits, lexical_ms = self._timed(self._lexical, query)
         dense_hits, dense_ms = self._timed(self._dense, query)
@@ -137,7 +160,16 @@ class RetrievalPipeline:
             rerank_ms=rerank_ms,
             total_ms=(time.perf_counter() - start) * 1000,
         )
-        return hits, times
+        return hits, times, self._signals(query, lexical_hits, dense_hits)
+
+    def _signals(
+        self, query: str, lexical_hits: list[RetrievalHit], dense_hits: list[RetrievalHit]
+    ) -> AbstentionSignals | None:
+        if self._lexical is None or not dense_hits:
+            return None
+        tokens = self._lexical.query_tokens(query)
+        bm25 = lexical_hits[0].score / tokens if lexical_hits and tokens else 0.0
+        return AbstentionSignals(top_cosine=dense_hits[0].score, bm25_norm=bm25)
 
     def _timed(
         self, index: LexicalIndex | DenseIndex | None, query: str
