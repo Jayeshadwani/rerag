@@ -83,3 +83,30 @@ the thresholds are written there only after the calibration results file exists.
 
 That any threshold pair reaches the 5% bound while catching most unanswerable queries (unknown until
 calibrated), and that the model's `insufficient` flag is used sensibly (unknown until the dev run).
+
+## Addendum 1: one answer-prompt revision on dev (pre-registered, written before it was run)
+
+Why: the first full dev run (`results/generation_dev.json`, prompt `answer` version `f715ca2be4cf`)
+refused 2 of the 6 unanswerable dev queries and 0 of the 54 answerable ones. Stage 1 refuses nothing
+(see the ADR-011 Result line), so the model's `insufficient` flag is the only abstention there is.
+
+**The change (the only one).** In `llm/prompts/answer.md`, the instructions say that the model answers
+only if the provided notes directly contain the answer, and otherwise sets `insufficient` to true with
+no claims. Nothing else changes: not the schema, the validator, the retry, the retrieval, the
+context size, the model, the effort or the output cap.
+
+**Adoption rule.** The revised prompt is adopted if and only if, on the dev split:
+
+1. false refusals on the answerable dev queries are at most 2 of 54, **and**
+2. unanswerable dev queries refused are strictly more than 2 of 6.
+
+Otherwise the original prompt stays. Both outcomes are reported; a rejected revision stays in
+`results/` and in git history as evidence. This is one revision, one run: no second revision is tried
+on dev under this addendum.
+
+**Reported side by side:** the table of the first run (outcomes per kind of query, first-attempt
+citation validity, retries, uncited-claim rate, gold-hit rate, rows, tokens and cost) for both prompts.
+
+**Limits that apply to the decision.** Six unanswerable dev queries: one more refusal is a change of
+17 points and is not statistical evidence. The rule is a pre-registered choice, not a test. The test
+split is not touched by this addendum.
