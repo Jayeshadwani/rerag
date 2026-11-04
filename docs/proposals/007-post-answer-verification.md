@@ -1,6 +1,6 @@
 # Proposal 007: stage 3, post-answer verification (amends ADR-011)
 
-Status: **open. Waiting for the owner's approval. Nothing in this proposal is built yet.**
+Status: **approved by the owner** (answers to the three questions below are recorded in the last section).
 Changes (if approved): the abstention part of ADR-011 (already amended by proposals 003 and 006),
 the PLAN M6 row, `[generation]` config, and the evaluation tooling (a separate abstention set).
 
@@ -138,3 +138,16 @@ are reported as they are and the owner decides what follows; the set cannot chan
    single run (as the M5 header row did), or only the shipped pipeline?
 3. Should the abstention set also be run through the current pipeline at no extra decision cost? I assumed
    yes, so the two pipelines are compared on the same new queries.
+
+## Owner's answers (approval)
+
+1. Reasoning effort of the verifier: **`medium`**, as proposed.
+2. The M6 test run reports **both rows** (the current pipeline and the pipeline with stage 3) in the single run.
+3. The abstention set is run through **both pipelines**.
+
+Composition of the abstention set, from the owner: mostly near-topic unanswerable queries, plus about 5
+clearly off-topic ones. The owner writes and commits the file to `rerag-data` before any model output for
+those queries is seen.
+
+Order of work, as agreed: build and test offline, a real smoke call on invented chunks, `--dry-run`, the
+dev run; then stop and show the results. No test run and no PR without the owner's approval.
