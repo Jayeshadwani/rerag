@@ -810,3 +810,84 @@ def test_the_stage_three_report_shows_both_pipelines_with_intervals_cost_and_lat
     assert "| answer-path model latency p50 / p95, s |" in out
     assert "| refused: cited notes do not answer the question |" in out
     assert "prompt `verify` version" in out
+
+
+def test_stage_three_latency_adds_the_verifier_call_to_the_answer_path(
+    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path
+) -> None:
+    settings = decided_settings(load_settings(config), NEVER_REFUSE)
+    resources = make_resources(settings, notebooks, tiny_tokenizer)
+    transport = FakeTransport(
+        staged_responder(), latency=lambda p: 3.0 if p.name == "verify" else 1.0
+    )
+    meter = CostMeter(settings.llm.prices, settings.llm.max_usd)
+    client = CachingClient(transport, ResponseCache(tmp_path / "l.sqlite"), meter, "minimal")
+    models = Models(
+        Generator(client, load_prompt("answer"), settings.llm.model, 100),
+        Verifier(client, load_prompt("verify"), settings.llm.model, ("medium", 400)),
+    )
+    results = run_generation(
+        settings, resources, CONTEXT, models, gold_subset(make_gold(notebooks), Split.DEV)
+    )
+    s3 = results.stage3
+    assert s3 is not None
+    without, with3 = s3.answer_path_latency_without, s3.answer_path_latency_with
+    assert without is not None
+    assert with3 is not None
+    assert (without.p50, without.p95) == (1.0, 1.0)  # the answer call alone: 1.0 s
+    assert (with3.p50, with3.p95) == (4.0, 4.0)  # plus the verifier call: 1.0 + 3.0 s
+    assert all(o.api_latency_s == 1.0 for o in results.queries)
+
+
+def test_stage_three_gold_hit_is_the_gold_hit_of_the_claims_it_kept(
+    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path
+) -> None:
+    settings = decided_settings(load_settings(config), NEVER_REFUSE)
+    resources = make_resources(settings, notebooks, tiny_tokenizer)
+    models, _ = make_models(settings, tmp_path, staged_responder())
+    results = run_generation(
+        settings, resources, CONTEXT, models, gold_subset(make_gold(notebooks), Split.DEV)
+    )
+    answerable = [o for o in results.queries if not o.unanswerable]
+    hits = [o.cites_relevant_chunk for o in answerable]
+    assert True in hits
+    assert False in hits
+    for o in answerable:
+        assert o.stage3 is not None
+        assert o.stage3.cites_relevant_chunk == o.cites_relevant_chunk  # all claims were kept
+    s3 = results.stage3
+    assert s3 is not None
+    assert s3.answered_citing_a_relevant_chunk == sum(1 for h in hits if h)
+    assert results.validity.answered_citing_a_relevant_chunk == sum(1 for h in hits if h)
+
+
+def test_the_stage_three_plan_skips_drafts_that_were_already_refused(
+    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path
+) -> None:
+    settings = decided_settings(load_settings(config), NEVER_REFUSE)
+    resources = make_resources(settings, notebooks, tiny_tokenizer)
+    pipeline, cap = decided_pipeline(settings, resources)
+    chunks = {c.id: c for c in resources.chunks(cap, "structural")}
+
+    def respond(prompt: Prompt) -> str:
+        if prompt.name == "answer" and "nothing" in prompt.variable:
+            return json.dumps({"insufficient": True, "claims": []})
+        return staged_responder()(prompt)
+
+    models, _ = make_models(settings, tmp_path, respond)
+    asker = Asker(pipeline, chunks, Thresholds(cosine=-1.0, bm25=-1.0), models, 2)
+    queries = select_all(make_gold(notebooks), Split.DEV)
+    for q in queries:
+        asker.ask(q.text)  # fills the cache with the answers (and verifications)
+    cache = ResponseCache(tmp_path / "m.sqlite")
+    effort = settings.llm.reasoning_effort
+    offline = Generator(CacheOnly(cache, effort), load_prompt("answer"), settings.llm.model, 100)
+    never_cached = lambda _p: False  # noqa: E731 - every verifier call would still have to be made
+    base = plan_generation(asker, queries, settings, len, lambda _p: True)
+    assert models.verifier is not None
+    plan = plan_stage3(base, asker, offline, models.verifier, (queries, chunks), settings,
+                       (len, never_cached))  # fmt: skip
+    refused = sum(1 for q in queries if q.type is QueryType.UNANSWERABLE and "nothing" in q.text)
+    assert refused > 0
+    assert plan.stage3 is not None
+    assert plan.stage3.calls == len(queries) - refused

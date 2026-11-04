@@ -490,8 +490,11 @@ def test_a_prompt_effort_overrides_the_default_in_the_request_and_the_cache_key(
 
 
 def test_a_cache_hit_reports_the_latency_of_the_call_that_filled_it(tmp_path: Path) -> None:
-    client, _t, cache, _meter = make_client(tmp_path)
+    transport = FakeTransport(echo, latency=lambda _p: 1.25)
+    cache = ResponseCache(tmp_path / "c.sqlite")
+    client = CachingClient(transport, cache, CostMeter({"m": PRICE}, 1.0), "minimal")
     fresh = client.complete_json(prompt(), Answer)
+    assert fresh.api_latency_s == 1.25
     key = cache_key(prompt(), "minimal")
     stored = cache.get(key)
     assert stored is not None
