@@ -6,23 +6,35 @@
 """
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict
 
 from noterecall.generate.abstain import Thresholds, refuse
 from noterecall.generate.answer import Generator, Outcome, Response
+from noterecall.generate.verify import Verifier
 from noterecall.models import Chunk
 from noterecall.retrieval.pipeline import AbstentionSignals, RetrievalPipeline
 
 
 class AskResult(BaseModel):
-    """The response, the signals stage 1 saw, and the chunk ids that were in the context."""
+    """The final response, the signals stage 1 saw, and the chunk ids that were in the context.
+    `drafted` is the response before stage 3 (the same object when stage 3 is off)."""
 
     model_config = ConfigDict(frozen=True)
 
     response: Response
+    drafted: Response
     signals: AbstentionSignals
     context_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Models:
+    """The model-side stages: the answer generator and, if stage 3 is on, the verifier."""
+
+    generator: Generator
+    verifier: Verifier | None = None
 
 
 class Asker:
@@ -33,18 +45,22 @@ class Asker:
         pipeline: RetrievalPipeline,
         chunks: Mapping[str, Chunk],
         thresholds: Thresholds,
-        generator: Generator,
+        models: Models,
         max_chunks: int,
     ) -> None:
         self._pipeline = pipeline
         self._chunks = chunks
         self._thresholds = thresholds
-        self._generator = generator
+        self._models = models
         self._max_chunks = max_chunks
 
     @property
+    def models(self) -> Models:
+        return self._models
+
+    @property
     def generator(self) -> Generator:
-        return self._generator
+        return self._models.generator
 
     def context_for(self, question: str) -> tuple[list[Chunk], AbstentionSignals]:
         """The chunks that would go into the prompt, and the stage-1 signals."""
@@ -58,8 +74,10 @@ class Asker:
         chunks, signals = self.context_for(question)
         ids = tuple(c.id for c in chunks)
         if self.stage1_refuses(signals):
-            return AskResult(
-                response=Response(outcome=Outcome.REFUSED_STAGE1), signals=signals, context_ids=ids
-            )
-        response = self._generator.answer(question, chunks)
-        return AskResult(response=response, signals=signals, context_ids=ids)
+            refusal = Response(outcome=Outcome.REFUSED_STAGE1)
+            return AskResult(response=refusal, drafted=refusal, signals=signals, context_ids=ids)
+        drafted = self._models.generator.answer(question, chunks)
+        final = drafted
+        if self._models.verifier is not None:
+            final = self._models.verifier.verify(question, drafted, self._chunks)
+        return AskResult(response=final, drafted=drafted, signals=signals, context_ids=ids)

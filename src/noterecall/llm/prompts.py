@@ -31,8 +31,15 @@ class PromptTemplate:
         self.version = version
         self._parts = parts
 
-    def render(self, model: str, max_output_tokens: int, **values: str) -> Prompt:
-        """Fill the placeholders and return a ready `Prompt`."""
+    def render(
+        self,
+        model: str,
+        max_output_tokens: int,
+        *,
+        reasoning_effort: str | None = None,
+        **values: str,
+    ) -> Prompt:
+        """Fill the placeholders and return a ready `Prompt` (with its own effort, if given)."""
         filled = {key: self._fill(text, values) for key, text in self._parts.items()}
         return Prompt(
             name=self.name,
@@ -42,6 +49,7 @@ class PromptTemplate:
             shared=filled.get("shared", ""),
             variable=filled.get("variable", ""),
             max_output_tokens=max_output_tokens,
+            reasoning_effort=reasoning_effort,
         )
 
     @staticmethod

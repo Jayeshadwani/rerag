@@ -48,6 +48,8 @@ output = 4.0
 max_chunks = 2
 max_output_tokens = 300
 max_false_refusal_pct = 5
+verify_effort = "medium"
+verify_max_output_tokens = 400
 
 [retrieval]
 candidate_depth = 5

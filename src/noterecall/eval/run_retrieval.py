@@ -258,7 +258,7 @@ class RunMeta(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     schema_version: Literal[1]
-    split: Split
+    split: Split | None  # None for a report-only query set that has no dev/test split
     git: GitState
     config: dict[str, object]
     tokenizer: str
@@ -311,7 +311,7 @@ def hardware_info() -> HardwareInfo:
 
 
 def make_meta(
-    settings: Settings, split: Split, queries: Sequence[QueryRef], context: RunContext
+    settings: Settings, split: Split | None, queries: Sequence[QueryRef], context: RunContext
 ) -> RunMeta:
     """Provenance for a results file. Query types are keyed by id, never by text."""
     return RunMeta(

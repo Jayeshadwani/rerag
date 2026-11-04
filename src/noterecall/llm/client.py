@@ -40,6 +40,7 @@ class Prompt(BaseModel):
     shared: str
     variable: str
     max_output_tokens: int
+    reasoning_effort: str | None = None  # None: the client's default effort
 
 
 class Usage(BaseModel):
@@ -73,6 +74,9 @@ class LLMResult[T: BaseModel](BaseModel):
     usage: Usage
     latency_s: float
     from_cache: bool
+    api_latency_s: float = (
+        0.0  # the API call's own latency; for a cache hit, that of the call that filled it
+    )
 
 
 class LLMClient(Protocol):

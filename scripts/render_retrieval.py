@@ -6,10 +6,11 @@ Every number is read from the results file; nothing is typed by hand. Used by
 
 from collections.abc import Callable, Sequence
 
-from noterecall.eval.ablation import Comparison, ConfigResult
-from noterecall.eval.run_generation import GenerationResults
+from noterecall.eval.ablation import Comparison, ConfigResult, LatencyStat
+from noterecall.eval.run_generation import GenerationResults, Row
 from noterecall.eval.run_header import HeaderDevResults
 from noterecall.eval.run_retrieval import DevResults, TestResults
+from noterecall.eval.stats import wilson_interval
 
 
 def _cell(text: str) -> str:
@@ -225,9 +226,93 @@ def _count(outcomes: Sequence[str], name: str) -> int:
     return sum(1 for o in outcomes if o == name)
 
 
+def _verify_version(result: GenerationResults) -> str:
+    version = result.verify_prompt_version
+    return f", prompt `verify` version {version}" if version else ""
+
+
+def _with_interval(successes: int, n: int) -> str:
+    """`k/n` and its 95% Wilson interval (n = 0 has no interval)."""
+    if n == 0:
+        return f"{successes}/{n}"
+    low, high = wilson_interval(successes, n)
+    return f"{successes}/{n} [{low:.2f}, {high:.2f}]"
+
+
+def _row(result: GenerationResults, name: str) -> Row:
+    return next(r for r in result.rows if r.name == name)
+
+
+def render_stage3(result: GenerationResults) -> list[str]:
+    """The current pipeline against stage 3 added, on the same answers (proposal 007)."""
+    s3 = result.stage3
+    if s3 is None:
+        return []
+    current = _row(result, "stages 1+2 (current pipeline)").metrics
+    with3 = _row(result, "stages 1+2+3").metrics
+    v = result.validity
+    shown = sum(o.claims for o in result.queries if o.outcome.value == "answered")
+    answered = sum(1 for o in result.queries if o.outcome.value == "answered")
+    n = len(result.queries)
+    cost_now = sum(o.cost_usd for o in result.queries)
+    cost_s3 = cost_now + s3.cost_usd
+    without, with_s3 = s3.answer_path_latency_without, s3.answer_path_latency_with
+
+    def latency(stat: LatencyStat | None) -> str:
+        return "n/a" if stat is None else f"{stat.p50:.2f} / {stat.p95:.2f}"
+
+    side = _grid(
+        ("Measure", "stages 1+2 (current)", "stages 1+2+3"),
+        [
+            [
+                "answerable queries refused (95% Wilson)",
+                _with_interval(current.false_refusals, current.answerable),
+                _with_interval(with3.false_refusals, with3.answerable),
+            ],
+            [
+                "unanswerable queries refused (95% Wilson)",
+                _with_interval(current.caught, current.unanswerable),
+                _with_interval(with3.caught, with3.unanswerable),
+            ],
+            [
+                "answered answerable queries citing a gold chunk",
+                f"{v.answered_citing_a_relevant_chunk}/{v.answered_answerable}",
+                f"{s3.answered_citing_a_relevant_chunk}/{s3.answered_answerable}",
+            ],
+            ["claims shown", str(shown), str(shown - s3.claims_dropped)],
+            ["model cost USD (all queries)", f"{cost_now:.4f}", f"{cost_s3:.4f}"],
+            ["model cost USD per query", f"{cost_now / n:.5f}", f"{cost_s3 / n:.5f}"],
+            [
+                "answer-path model latency p50 / p95, s",
+                latency(without),
+                latency(with_s3),
+            ],
+        ],
+    )
+    u = s3.usage
+    tokens = f"{u.input_tokens} / {u.cached_tokens} / {u.output_tokens} / {u.reasoning_tokens}"
+    detail = _grid(
+        ("Stage 3", "Count"),
+        [
+            [
+                "queries that reached stage 3 (answered by stages 1+2)",
+                f"{s3.calls_queries}/{answered}",
+            ],
+            ["refused: cited notes do not answer the question", str(s3.refused_by_verifier)],
+            ["refused: no supported claim left", str(s3.refused_unsupported)],
+            ["refused: verifier output invalid after the retry", str(s3.refused_verifier_invalid)],
+            ["verifier retried", str(s3.retried)],
+            ["claims dropped / claims checked", f"{s3.claims_dropped}/{s3.claims_in}"],
+            ["tokens: input / cached / output / reasoning", tokens],
+            ["stage 3 cost USD", f"{s3.cost_usd:.4f}"],
+        ],
+    )
+    return [side, detail]
+
+
 def render_generation(result: GenerationResults) -> str:
     """The M6 report: outcomes per kind of query, citation validity, the three rows and the cost."""
-    split = result.meta.split.value
+    split = result.query_set
     outcome_rows = []
     for label, flag in (("answerable", False), ("unanswerable", True)):
         outs = [q.outcome.value for q in result.queries if q.unanswerable is flag]
@@ -289,7 +374,8 @@ def render_generation(result: GenerationResults) -> str:
     meta = result.meta
     footer = (
         f"{meta.queries} {split} queries, prompt `answer` version "
-        f"{result.meta.prompt_versions['answer']}, commit `{meta.git.sha[:12]}`"
+        f"{result.meta.prompt_versions['answer']}"
+        f"{_verify_version(result)}, commit `{meta.git.sha[:12]}`"
         f"{' (dirty tree)' if meta.git.dirty else ''}. Stage-1 thresholds: cosine "
         f"{result.thresholds.cosine:.4f}, BM25 {result.thresholds.bm25:.4f}."
     )
@@ -297,7 +383,10 @@ def render_generation(result: GenerationResults) -> str:
         ("Queries", "n", "Answered", "Refused", "by stage 1", "by the model", "invalid twice"),
         outcome_rows,
     )
-    return "\n\n".join([outcomes, validity, rows, cost, footer]) + "\n"
+    parts = [outcomes, validity, rows, cost]
+    if result.stage3 is not None:
+        parts.extend(render_stage3(result))
+    return "\n\n".join([*parts, footer]) + "\n"
 
 
 def _split_counts(result: GenerationResults) -> tuple[str, str]:
@@ -341,7 +430,7 @@ def render_generation_pair(first: GenerationResults, second: GenerationResults) 
     rows = [[label, *(fn(r) for r in (first, second))] for label, fn in measures]
     meta = first.meta
     footer = (
-        f"{meta.queries} {meta.split.value} queries, same retrieval and thresholds; commits "
+        f"{meta.queries} {first.query_set} queries, same retrieval and thresholds; commits "
         f"`{first.meta.git.sha[:12]}` and `{second.meta.git.sha[:12]}`."
     )
     return _grid(("Measure", *columns), rows) + "\n\n" + footer + "\n"

@@ -7,6 +7,8 @@ db_path = "data/noterecall.sqlite"
 results_dir = "results"
 # The gold set is private (ADR-009): it lives in the data repo, and the owner writes it.
 gold_path = "data/rerag-data/gold/gold.json"
+# A separate, report-only set for abstention (proposal 007). Never frozen, no dev/test split.
+abstention_path = "data/rerag-data/gold/abstention.json"
 
 [logging]
 level = "INFO"
@@ -102,6 +104,10 @@ header = true
 max_chunks = 6
 max_output_tokens = 1500
 max_false_refusal_pct = 5
+# Stage 3, post-answer verification (proposal 007): effort and cap are pre-registered, not tuned.
+verify_effort = "medium"
+verify_max_output_tokens = 4000
+stage3 = false
 # tau_cos of the "cosine only" reference row (same calibration, BM25 axis always true).
 cosine_only = -0.4020613431930542
 

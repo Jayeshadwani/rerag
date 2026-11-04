@@ -29,6 +29,9 @@ class Outcome(StrEnum):
     REFUSED_STAGE1 = "refused_stage1"
     REFUSED_MODEL = "refused_model"
     REFUSED_INVALID = "refused_invalid"
+    REFUSED_VERIFIER = "refused_verifier"
+    REFUSED_UNSUPPORTED = "refused_unsupported"
+    REFUSED_VERIFIER_INVALID = "refused_verifier_invalid"
 
 
 class CitedClaim(BaseModel):
@@ -52,8 +55,22 @@ class FirstAttempt(BaseModel):
     valid: bool
 
 
+class Verification(BaseModel):
+    """What stage 3 did to an answered response (proposal 007)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    answers_question: bool | None
+    claims_in: int
+    claims_dropped: int
+    attempts: int
+    usage: Usage
+    api_latency_s: float
+
+
 class Response(BaseModel):
-    """The result of asking a question."""
+    """The result of asking a question. `usage` and `api_latency_s` are those of the answer calls;
+    stage 3, if it ran, has its own in `verification`."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -62,6 +79,8 @@ class Response(BaseModel):
     attempts: int = 0
     first_attempt: FirstAttempt | None = None
     usage: Usage = Usage()
+    api_latency_s: float = 0.0
+    verification: Verification | None = None
 
 
 def short_ids(chunks: Sequence[Chunk]) -> dict[str, Chunk]:
@@ -135,6 +154,7 @@ class Generator:
         safe_question = scrub(question).text
         feedback = ""
         usage = Usage()
+        latency = 0.0
         first: FirstAttempt | None = None
         for attempt in (1, 2):
             prompt = self._render(notes, safe_question, feedback)
@@ -147,30 +167,36 @@ class Generator:
                 ]
             else:
                 answer, usage = result.parsed, usage.plus(result.usage)
+                latency += result.api_latency_s
                 problems = validate_answer(answer, context)
             if attempt == 1:
                 first = first_attempt_stats(answer, problems)
             if not problems and answer is not None:
-                return self._finish(answer, context, attempt, first, usage)
+                return self._finish(answer, context, (attempt, first), (usage, latency))
             feedback = feedback_text(problems)
         return Response(
-            outcome=Outcome.REFUSED_INVALID, attempts=2, first_attempt=first, usage=usage
+            outcome=Outcome.REFUSED_INVALID,
+            attempts=2,
+            first_attempt=first,
+            usage=usage,
+            api_latency_s=latency,
         )
 
     @staticmethod
     def _finish(
         answer: Answer,
         context: dict[str, Chunk],
-        attempts: int,
-        first: FirstAttempt | None,
-        usage: Usage,
+        tries: tuple[int, FirstAttempt | None],
+        spent: tuple[Usage, float],
     ) -> Response:
+        attempts, first = tries
+        usage, latency = spent
+        common = {"attempts": attempts, "first_attempt": first, "usage": usage,
+                  "api_latency_s": latency}  # fmt: skip
         if answer.insufficient:
-            return Response(outcome=Outcome.REFUSED_MODEL, attempts=attempts, first_attempt=first,
-                            usage=usage)  # fmt: skip
+            return Response(outcome=Outcome.REFUSED_MODEL, **common)
         claims = tuple(
             CitedClaim(text=c.text, chunk_ids=tuple(context[i].id for i in c.citations))
             for c in answer.claims
         )
-        return Response(outcome=Outcome.ANSWERED, claims=claims, attempts=attempts,
-                        first_attempt=first, usage=usage)  # fmt: skip
+        return Response(outcome=Outcome.ANSWERED, claims=claims, **common)

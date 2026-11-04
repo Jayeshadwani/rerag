@@ -11,11 +11,12 @@ rate; unanswerable recall is given as raw counts; precision and F1 are for refer
 """
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict
 
-from noterecall.config import DecidedThresholds, Settings
-from noterecall.eval.ablation import RunKey
+from noterecall.config import DecidedThresholds, PriceConfig, Settings
+from noterecall.eval.ablation import LatencyStat, RunKey, percentile_stat
 from noterecall.eval.gold import GoldSet, QueryType, Split, relevant_keys
 from noterecall.eval.metrics import is_relevant
 from noterecall.eval.run_retrieval import (
@@ -34,8 +35,8 @@ from noterecall.generate.abstain import (
     calibrate,
     refusal_metrics,
 )
-from noterecall.generate.answer import FirstAttempt, Generator, Outcome
-from noterecall.generate.ask import Asker
+from noterecall.generate.answer import FirstAttempt, Outcome, Response
+from noterecall.generate.ask import Asker, Models
 from noterecall.llm.client import Usage
 from noterecall.llm.cost import cost_usd
 from noterecall.models import Chunk
@@ -122,8 +123,25 @@ def run_calibration(
     )
 
 
+class Stage3Outcome(BaseModel):
+    """What stage 3 did to one answered query (proposal 007)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    outcome: Outcome
+    answers_question: bool | None
+    claims_in: int
+    claims_dropped: int
+    attempts: int
+    cites_relevant_chunk: bool | None
+    usage: Usage
+    cost_usd: float
+    api_latency_s: float
+
+
 class QueryOutcome(BaseModel):
-    """What happened to one query. No text, no answer, no citation text."""
+    """What happened to one query. No text, no answer, no citation text. `outcome` and the fields
+    next to it describe the pipeline without stage 3; `stage3` is set when stage 3 ran."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -139,6 +157,8 @@ class QueryOutcome(BaseModel):
     cites_relevant_chunk: bool | None
     usage: Usage
     cost_usd: float
+    api_latency_s: float = 0.0
+    stage3: Stage3Outcome | None = None
 
 
 class Validity(BaseModel):
@@ -160,8 +180,28 @@ class Validity(BaseModel):
     answered_citing_a_relevant_chunk: int
 
 
+class Stage3Summary(BaseModel):
+    """Stage 3 over the queries it ran on: refusals by reason, dropped claims, cost, latency."""
+
+    model_config = ConfigDict(frozen=True)
+
+    calls_queries: int
+    refused_by_verifier: int
+    refused_unsupported: int
+    refused_verifier_invalid: int
+    retried: int
+    claims_in: int
+    claims_dropped: int
+    answered_answerable: int
+    answered_citing_a_relevant_chunk: int
+    usage: Usage
+    cost_usd: float
+    answer_path_latency_without: LatencyStat | None
+    answer_path_latency_with: LatencyStat | None
+
+
 class Row(BaseModel):
-    """One of the three reported rows."""
+    """One of the reported rows."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -170,7 +210,7 @@ class Row(BaseModel):
 
 
 class GenerationResults(BaseModel):
-    """The contents of `results/generation_<split>.json`."""
+    """The contents of `results/generation_*.json`."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -182,15 +222,65 @@ class GenerationResults(BaseModel):
     queries: tuple[QueryOutcome, ...]
     total_usage: Usage
     total_cost_usd: float
+    query_set: str = "gold"
+    stage3: Stage3Summary | None = None
+    verify_prompt_version: str | None = None
 
 
-def _outcome(asker: Asker, q: QueryRef, chunks: dict[str, Chunk]) -> QueryOutcome:
+@dataclass(frozen=True)
+class Subset:
+    """The queries of one run: where they come from (`label`), their split if any, the queries."""
+
+    label: str
+    split: Split | None
+    queries: list[QueryRef]
+
+
+def gold_subset(gold: GoldSet, split: Split) -> Subset:
+    """A split of the frozen gold set."""
+    return Subset(split.value, split, select_all(gold, split))
+
+
+def set_subset(gold: GoldSet, label: str) -> Subset:
+    """A whole report-only query set (no split); it must contain both kinds of query."""
+    refs = [QueryRef(q.id, q.text, q.type, relevant_keys(q)) for q in gold.queries]
+    unanswerable = sum(1 for r in refs if r.type is QueryType.UNANSWERABLE)
+    if not 0 < unanswerable < len(refs):
+        raise RunError(f"the {label} set needs both answerable and unanswerable queries")
+    return Subset(label, None, refs)
+
+
+def _cites_relevant(response: Response, q: QueryRef, chunks: dict[str, Chunk]) -> bool | None:
+    if response.outcome is not Outcome.ANSWERED or not q.relevant:
+        return None
+    cited = {cid for claim in response.claims for cid in claim.chunk_ids}
+    return any(is_relevant(chunks[cid], q.relevant) for cid in cited)
+
+
+def _stage3(
+    q: QueryRef, final: Response, chunks: dict[str, Chunk], price: PriceConfig
+) -> Stage3Outcome | None:
+    note = final.verification
+    if note is None:
+        return None
+    return Stage3Outcome(
+        outcome=final.outcome,
+        answers_question=note.answers_question,
+        claims_in=note.claims_in,
+        claims_dropped=note.claims_dropped,
+        attempts=note.attempts,
+        cites_relevant_chunk=_cites_relevant(final, q, chunks),
+        usage=note.usage,
+        cost_usd=cost_usd(note.usage, price),
+        api_latency_s=note.api_latency_s,
+    )
+
+
+def _outcome(
+    asker: Asker, q: QueryRef, chunks: dict[str, Chunk], price: PriceConfig
+) -> QueryOutcome:
     result = asker.ask(q.text)
-    r = result.response
-    cites: bool | None = None
-    if r.outcome is Outcome.ANSWERED and q.relevant:
-        cited = {cid for claim in r.claims for cid in claim.chunk_ids}
-        cites = any(is_relevant(chunks[cid], q.relevant) for cid in cited)
+    r = result.drafted
     return QueryOutcome(
         query_id=q.id,
         type=q.type,
@@ -201,9 +291,11 @@ def _outcome(asker: Asker, q: QueryRef, chunks: dict[str, Chunk]) -> QueryOutcom
         attempts=r.attempts,
         first_attempt=r.first_attempt,
         claims=len(r.claims),
-        cites_relevant_chunk=cites,
+        cites_relevant_chunk=_cites_relevant(r, q, chunks),
         usage=r.usage,
-        cost_usd=0.0,
+        cost_usd=cost_usd(r.usage, price),
+        api_latency_s=r.api_latency_s,
+        stage3=_stage3(q, result.response, chunks, price),
     )
 
 
@@ -231,47 +323,100 @@ def summarize_validity(outcomes: Sequence[QueryOutcome]) -> Validity:
     )
 
 
-def run_generation(  # noqa: PLR0913, PLR0917 - settings, data, models, provenance and split
+def summarize_stage3(outcomes: Sequence[QueryOutcome]) -> Stage3Summary | None:
+    """Stage 3 over the queries it ran on, or None if it did not run."""
+    ran = [(o, o.stage3) for o in outcomes if o.stage3 is not None]
+    if not ran:
+        return None
+    usage = Usage()
+    for _o, s3 in ran:
+        usage = usage.plus(s3.usage)
+    kept = [(o, s3) for o, s3 in ran if s3.outcome is Outcome.ANSWERED and not o.unanswerable]
+    without = [o.api_latency_s for o, _ in ran]
+    with_s3 = [o.api_latency_s + s3.api_latency_s for o, s3 in ran]
+    return Stage3Summary(
+        calls_queries=len(ran),
+        refused_by_verifier=sum(1 for _, s in ran if s.outcome is Outcome.REFUSED_VERIFIER),
+        refused_unsupported=sum(1 for _, s in ran if s.outcome is Outcome.REFUSED_UNSUPPORTED),
+        refused_verifier_invalid=sum(
+            1 for _, s in ran if s.outcome is Outcome.REFUSED_VERIFIER_INVALID
+        ),
+        retried=sum(1 for _, s in ran if s.attempts == 2),
+        claims_in=sum(s.claims_in for _, s in ran),
+        claims_dropped=sum(s.claims_dropped for _, s in ran),
+        answered_answerable=len(kept),
+        answered_citing_a_relevant_chunk=sum(1 for _, s in kept if s.cites_relevant_chunk),
+        usage=usage,
+        cost_usd=sum(s.cost_usd for _, s in ran),
+        answer_path_latency_without=percentile_stat(without),
+        answer_path_latency_with=percentile_stat(with_s3),
+    )
+
+
+def make_rows(outcomes: Sequence[QueryOutcome], cosine_only: float) -> tuple[Row, ...]:
+    """The reported rows: stage 1 alone (two variants), stages 1+2, and 1+2+3 if it ran."""
+    rows = [
+        Row(
+            name="cosine only",
+            metrics=refusal_metrics((o.unanswerable, o.top_cosine < cosine_only) for o in outcomes),
+        ),
+        Row(
+            name="cosine + BM25 (stage 1)",
+            metrics=refusal_metrics(
+                (o.unanswerable, o.outcome is Outcome.REFUSED_STAGE1) for o in outcomes
+            ),
+        ),
+        Row(
+            name="stages 1+2 (current pipeline)",
+            metrics=refusal_metrics(
+                (o.unanswerable, o.outcome is not Outcome.ANSWERED) for o in outcomes
+            ),
+        ),
+    ]
+    if any(o.stage3 is not None for o in outcomes):
+        final = [
+            (o.unanswerable, (o.stage3.outcome if o.stage3 else o.outcome) is not Outcome.ANSWERED)
+            for o in outcomes
+        ]
+        rows.append(Row(name="stages 1+2+3", metrics=refusal_metrics(final)))
+    return tuple(rows)
+
+
+def run_generation(
     settings: Settings,
-    gold: GoldSet,
     resources: Resources,
     context: RunContext,
-    generator: Generator,
-    split: Split,
+    models: Models,
+    subset: Subset,
 ) -> GenerationResults:
-    """Ask every query of the split with the shipped thresholds and report the three rows."""
+    """Ask every query of the subset with the shipped thresholds and report the rows."""
     gen = settings.generation
     if gen.decided is None or gen.cosine_only is None:
         raise RunError("config has no [generation.decided]; run and commit the dev calibration")
-    queries = select_all(gold, split)
     pipeline, cap = decided_pipeline(settings, resources)
     chunks = {c.id: c for c in resources.chunks(cap, "structural")}
     shipped = Thresholds(cosine=gen.decided.cosine, bm25=gen.decided.bm25)
-    asker = Asker(pipeline, chunks, shipped, generator, gen.max_chunks)
+    asker = Asker(pipeline, chunks, shipped, models, gen.max_chunks)
     price = settings.llm.prices[settings.llm.model]
-    outcomes: list[QueryOutcome] = []
-    for q in queries:
-        o = _outcome(asker, q, chunks)
-        outcomes.append(o.model_copy(update={"cost_usd": cost_usd(o.usage, price)}))
-    rows = (
-        Row(name="cosine only", metrics=refusal_metrics(
-            (o.unanswerable, o.top_cosine < gen.cosine_only) for o in outcomes)),
-        Row(name="cosine + BM25 (stage 1)", metrics=refusal_metrics(
-            (o.unanswerable, o.outcome is Outcome.REFUSED_STAGE1) for o in outcomes)),
-        Row(name="two-stage (ships)", metrics=refusal_metrics(
-            (o.unanswerable, o.outcome is not Outcome.ANSWERED) for o in outcomes)),
-    )  # fmt: skip
+    outcomes = [_outcome(asker, q, chunks, price) for q in subset.queries]
     usage = Usage()
     for o in outcomes:
         usage = usage.plus(o.usage)
-    meta = make_meta(settings, split, queries, context)
+    stage3 = summarize_stage3(outcomes)
+    meta = make_meta(settings, subset.split, subset.queries, context)
+    versions = {"answer": models.generator.prompt_version}
+    if models.verifier is not None:
+        versions["verify"] = models.verifier.prompt_version
     return GenerationResults(
-        meta=meta.model_copy(update={"prompt_versions": {"answer": generator.prompt_version}}),
+        meta=meta.model_copy(update={"prompt_versions": versions}),
         thresholds=gen.decided,
         cosine_only_threshold=gen.cosine_only,
-        rows=rows,
+        rows=make_rows(outcomes, gen.cosine_only),
         validity=summarize_validity(outcomes),
         queries=tuple(outcomes),
         total_usage=usage,
-        total_cost_usd=sum(o.cost_usd for o in outcomes),
+        total_cost_usd=sum(o.cost_usd for o in outcomes) + (stage3.cost_usd if stage3 else 0.0),
+        query_set=subset.label,
+        stage3=stage3,
+        verify_prompt_version=models.verifier.prompt_version if models.verifier else None,
     )

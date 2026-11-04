@@ -14,7 +14,8 @@ from pydantic import BaseModel, ConfigDict
 from noterecall.config import PriceConfig
 from noterecall.eval.gold import QueryType
 from noterecall.eval.run_retrieval import QueryRef
-from noterecall.generate.answer import Generator, Response
+from noterecall.generate.answer import CitedClaim, Generator, Outcome, Response
+from noterecall.generate.verify import Verifier
 from noterecall.llm.client import Usage
 from noterecall.llm.cost import cost_usd
 from noterecall.models import Chunk
@@ -67,6 +68,40 @@ def run_step_a(generator: Generator, price: PriceConfig) -> SmokeRow:
     """One real call on the invented chunks."""
     response = generator.answer(SYNTHETIC_QUESTION, synthetic_chunks())
     return smoke_row("step A (invented chunks)", response, price)
+
+
+def verify_row(label: str, response: Response, price: PriceConfig) -> SmokeRow:
+    """A stage-3 call: the verifier's usage and cost, and what it did to the draft."""
+    note = response.verification
+    if note is None:
+        raise ValueError("the response has no verification record")
+    return SmokeRow(
+        label=label,
+        outcome=response.outcome.value,
+        attempts=note.attempts,
+        claims=len(response.claims),
+        usage=note.usage,
+        cost_usd=cost_usd(note.usage, price),
+    )
+
+
+def run_step_c(verifier: Verifier, price: PriceConfig) -> tuple[SmokeRow, str]:
+    """One real stage-3 call on invented chunks: a draft with one claim its chunk states and one
+    that contradicts its chunk. Returns the row and what the verifier did (observed)."""
+    chunks = {c.id: c for c in synthetic_chunks()}
+    draft = Response(
+        outcome=Outcome.ANSWERED,
+        attempts=1,
+        claims=(
+            CitedClaim(text="Use df.groupby('key')['value'].mean().", chunk_ids=("synthetic-1",)),
+            CitedClaim(text="plt.hist draws a pie chart.", chunk_ids=("synthetic-3",)),
+        ),
+    )
+    result = verifier.verify(SYNTHETIC_QUESTION, draft, chunks)
+    note = result.verification
+    answers = None if note is None else note.answers_question
+    detail = f"answers_question={answers}; kept {len(result.claims)} of {len(draft.claims)} claims"
+    return verify_row("step C (stage 3, invented chunks)", result, price), detail
 
 
 def choose_step_b(items: Sequence[tuple[QueryRef, bool]]) -> list[QueryRef]:

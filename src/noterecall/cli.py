@@ -9,6 +9,7 @@ unexpected errors are not caught.
 import importlib.metadata
 import sqlite3
 import sys
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -33,6 +34,7 @@ from noterecall.eval.gold import (
     relevant_keys,
     save_gold,
     summarize,
+    validate_abstention,
     validate_gold,
 )
 from noterecall.eval.labeling import Entry, QuerySession, build_entries
@@ -45,15 +47,17 @@ from noterecall.eval.ledger import (
 )
 from noterecall.eval.run_generation import (
     GenerationResults,
+    Subset,
     decided_pipeline,
+    gold_subset,
     run_calibration,
     run_generation,
     select_all,
+    set_subset,
 )
 from noterecall.eval.run_header import HeaderDevResults, run_header_dev
 from noterecall.eval.run_retrieval import (
     DevResults,
-    QueryRef,
     Resources,
     RunContext,
     RunError,
@@ -61,12 +65,20 @@ from noterecall.eval.run_retrieval import (
     run_test,
 )
 from noterecall.generate.abstain import Choice, Thresholds
-from noterecall.generate.ask import Asker
-from noterecall.generate.commands import format_answer, format_context, format_plan, plan_generation
+from noterecall.generate.ask import Asker, Models
+from noterecall.generate.commands import (
+    format_answer,
+    format_context,
+    format_plan,
+    plan_generation,
+    plan_stage3,
+)
 from noterecall.generate.runtime import (
+    CacheOnly,
     NoCalls,
     build_client,
     build_generator,
+    build_verifier,
     model_tokenizer,
     spent_so_far,
 )
@@ -75,6 +87,7 @@ from noterecall.generate.smoke import (
     choose_step_b,
     format_rows,
     run_step_a,
+    run_step_c,
     smoke_row,
 )
 from noterecall.index.embeddings import EmbeddingService
@@ -98,8 +111,8 @@ from noterecall.ingest.sync import (
 from noterecall.ingest.sync import (
     sync as run_sync,
 )
-from noterecall.llm.cache import ResponseCache
-from noterecall.llm.client import LLMError
+from noterecall.llm.cache import ResponseCache, cache_key
+from noterecall.llm.client import LLMError, Prompt
 from noterecall.retrieval.pipeline import Depths
 
 KNOWN_ERRORS = (
@@ -287,8 +300,12 @@ def _report(issues: list[Issue]) -> int:
     return errors
 
 
-def _gold_validate(settings: Settings, path: Path, ready: bool) -> int:
+def _gold_validate(settings: Settings, path: Path, ready: bool, kind: str = "gold") -> int:
     gold = load_gold(path)
+    if kind == "abstention":
+        reference_path = settings.paths.gold_path
+        reference = load_gold(reference_path) if reference_path.exists() else None
+        return _report(validate_abstention(gold, _notebook_hashes(settings), reference))
     return _report(validate_gold(gold, _notebook_hashes(settings), require_complete=ready))
 
 
@@ -297,11 +314,18 @@ def gold_validate(
     config: ConfigOption = None,
     gold_path: GoldPathOption = None,
     ready: Annotated[bool, typer.Option("--ready", help="Also require the ADR-009 size.")] = False,
+    kind: Annotated[
+        str, typer.Option("--kind", help="gold (default) or abstention (the report-only set).")
+    ] = "gold",
 ) -> None:
     """Report labels whose cells no longer exist, and other problems (ids and counts only)."""
     try:
         settings = _settings(config)
-        errors = _gold_validate(settings, _gold_path(settings, gold_path), ready)
+        if kind not in ("gold", "abstention"):
+            raise GoldError("--kind must be gold or abstention")
+        default = settings.paths.abstention_path if kind == "abstention" else None
+        path = _gold_path(settings, gold_path if gold_path is not None else default)
+        errors = _gold_validate(settings, path, ready, kind)
     except KNOWN_ERRORS as exc:
         raise _fail(exc) from exc
     if errors:
@@ -378,13 +402,13 @@ def _labelled(base: GoldQuery, session: QuerySession) -> GoldQuery:
     return base.model_copy(update={"relevant": refs})
 
 
-def _label_one(gold: GoldSet, entries: list[Entry], path: Path) -> GoldSet:
+def _label_one(gold: GoldSet, entries: list[Entry], path: Path, prefix: str = "q") -> GoldSet:
     text = typer.prompt("query text").strip()
     qtype = _ask_type()
     session = QuerySession(entries, text, qtype is QueryType.UNANSWERABLE)
     if not _run_session(session):
         return gold
-    new = _labelled(GoldQuery(id=next_query_id(gold), text=text, type=qtype), session)
+    new = _labelled(GoldQuery(id=next_query_id(gold, prefix), text=text, type=qtype), session)
     updated = gold.model_copy(update={"queries": (*gold.queries, new)})
     save_gold(updated, path)
     typer.echo(f"saved {new.id}")
@@ -407,7 +431,7 @@ def _edit_one(gold: GoldSet, query_id: str, entries: list[Entry], path: Path) ->
     typer.echo(f"saved {query_id}")
 
 
-def _label(settings: Settings, path: Path, edit: str | None) -> None:
+def _label(settings: Settings, path: Path, edit: str | None, prefix: str = "q") -> None:
     conn = connect(settings.paths.db_path)
     try:
         entries = build_entries(list(notebook_cells(conn)))
@@ -422,7 +446,7 @@ def _label(settings: Settings, path: Path, edit: str | None) -> None:
     if gold.frozen:
         raise GoldError("the gold set is frozen: queries cannot be added; use --edit to fix labels")
     while True:
-        gold = _label_one(gold, entries, path)
+        gold = _label_one(gold, entries, path, prefix)
         if not typer.confirm("another query?", default=True):
             return
 
@@ -434,11 +458,14 @@ def label(
     edit: Annotated[
         str | None, typer.Option("--edit", help="Redo the labels of this query id.")
     ] = None,
+    id_prefix: Annotated[
+        str, typer.Option("--id-prefix", help="Prefix of new ids (a for the abstention set).")
+    ] = "q",
 ) -> None:
     """Write gold queries and mark their relevant cells (you decide relevance, not the tool)."""
     try:
         settings = _settings(config)
-        _label(settings, _gold_path(settings, gold_path), edit)
+        _label(settings, _gold_path(settings, gold_path), edit, id_prefix)
     except KNOWN_ERRORS as exc:
         raise _fail(exc) from exc
 
@@ -564,6 +591,13 @@ class Suite(StrEnum):
     GENERATION = "generation"
 
 
+class QuerySet(StrEnum):
+    """Which queries `--suite generation` asks: the frozen gold set or the abstention set."""
+
+    GOLD = "gold"
+    ABSTENTION = "abstention"
+
+
 def _eval_header_dev(settings: Settings, out: Path | None) -> str:
     decided = settings.retrieval.decided
     if decided is None:
@@ -624,45 +658,93 @@ def _describe_choice(label: str, choice: Choice) -> str:
     )
 
 
-def _asker(settings: Settings, resources: Resources, cache: ResponseCache, real: bool) -> Asker:
+def _asker(
+    settings: Settings, resources: Resources, cache: ResponseCache, real: bool, stage3: bool = False
+) -> Asker:
     """An asker on the decided pipeline; `real` is False for estimates (no API client)."""
     thresholds = settings.generation.decided
     if thresholds is None:
         raise RunError("config has no [generation.decided]; run and commit the dev calibration")
     pipeline, cap = decided_pipeline(settings, resources)
     chunks = {c.id: c for c in resources.chunks(cap, "structural")}
-    generator = build_generator(settings, build_client(settings, cache) if real else NoCalls())
+    client = build_client(settings, cache) if real else NoCalls()
+    models = Models(
+        build_generator(settings, client),
+        build_verifier(settings, client) if stage3 or settings.generation.stage3 else None,
+    )
     return Asker(
         pipeline,
         chunks,
         Thresholds(cosine=thresholds.cosine, bm25=thresholds.bm25),
-        generator,
+        models,
         settings.generation.max_chunks,
     )
 
 
+@dataclass(frozen=True)
+class GenerationRun:
+    """What `eval --suite generation` was asked to do."""
+
+    split: Split
+    query_set: QuerySet
+    milestone: str | None
+    out: Path | None
+    dry_run: bool
+    confirmed: bool
+    stage3: bool
+
+
 def _generation_plan(
-    settings: Settings, resources: Resources, cache: ResponseCache, queries: list[QueryRef]
+    settings: Settings, resources: Resources, cache: ResponseCache, run: GenerationRun
 ) -> str:
-    """The dry-run text for answering these queries (no API client is built)."""
-    planner = _asker(settings, resources, cache, real=False)
+    """The dry-run text (no API client is built): the answer calls, and stage 3 if asked."""
+    subset = _subset(settings, run)
+    asker = _asker(settings, resources, cache, real=False, stage3=run.stage3)
     counter = model_tokenizer(settings.llm.model).count
-    refused, estimate = plan_generation(planner, planner.generator, queries, settings, counter)
-    spent = spent_so_far(settings, cache)
-    return format_plan(refused, len(queries), estimate, spent, settings.llm.max_usd)
+    effort = settings.llm.reasoning_effort
+
+    def is_cached(prompt: Prompt) -> bool:
+        return cache.get(cache_key(prompt, prompt.reasoning_effort or effort)) is not None
+
+    plan = plan_generation(asker, subset.queries, settings, counter, is_cached)
+    if run.stage3:
+        cap = decided_pipeline(settings, resources)[1]
+        chunks = {c.id: c for c in resources.chunks(cap, "structural")}
+        offline = CacheOnly(cache, effort)
+        plan = plan_stage3(
+            plan,
+            asker,
+            build_generator(settings, offline),
+            build_verifier(settings, NoCalls()),
+            (subset.queries, chunks),
+            settings,
+            (counter, is_cached),
+        )
+    return format_plan(plan, spent_so_far(settings, cache), settings.llm.max_usd)
 
 
-def _save_generation(
-    settings: Settings, results: GenerationResults, milestone: str | None, out: Path | None
-) -> str:
-    split = results.meta.split
-    name = "generation_dev.json" if split is Split.DEV else f"generation_test_{milestone}.json"
-    target = out if out is not None else settings.paths.results_dir / name
+def _subset(settings: Settings, run: GenerationRun) -> Subset:
+    if run.query_set is QuerySet.ABSTENTION:
+        path = settings.paths.abstention_path
+        if not path.exists():
+            raise RunError(f"the abstention set was not found at {path}")
+        return set_subset(load_gold(path), "abstention")
+    return gold_subset(load_gold(settings.paths.gold_path), run.split)
+
+
+def _save_generation(settings: Settings, results: GenerationResults, run: GenerationRun) -> str:
+    stem = "generation_" + (
+        "abstention" if run.query_set is QuerySet.ABSTENTION else results.query_set
+    )
+    suffix = "_stage3" if results.stage3 is not None else ""
+    if run.split is Split.TEST and run.query_set is QuerySet.GOLD:
+        stem = f"generation_test_{run.milestone}"
+    target = run.out if run.out is not None else settings.paths.results_dir / f"{stem}{suffix}.json"
     _write_json(target, results.model_dump_json(indent=2))
-    if split is Split.TEST and milestone is not None:
+    if run.split is Split.TEST and run.query_set is QuerySet.GOLD and run.milestone is not None:
         git = results.meta.git
         entry = LedgerEntry(
-            milestone=milestone,
+            milestone=run.milestone,
             git_sha=git.sha,
             results_file=target.name,
             results_sha256=file_sha256(target),
@@ -671,39 +753,35 @@ def _save_generation(
     return f"eval: wrote {target} (cost ${results.total_cost_usd:.4f})"
 
 
-def _eval_generation(
-    settings: Settings,
-    split: Split,
-    milestone: str | None,
-    out: Path | None,
-    mode: tuple[bool, bool],
-) -> str:
-    dry_run, confirmed = mode
+def _check_test_run(settings: Settings, run: GenerationRun) -> None:
+    """The test split runs once per milestone from a clean tree on a frozen gold set."""
+    if run.split is not Split.TEST or run.query_set is not QuerySet.GOLD or run.dry_run:
+        return
+    if run.milestone is None:
+        raise RunError("--split test needs --milestone (the test split runs once per milestone)")
     gold = load_gold(settings.paths.gold_path)
-    git = git_state()
-    if split is Split.TEST and not dry_run:
-        if milestone is None:
-            raise RunError(
-                "--split test needs --milestone (the test split runs once per milestone)"
-            )
-        ledger = read_ledger(settings.paths.results_dir / "test_ledger.json")
-        check_test_allowed(ledger, milestone, git.dirty, gold.frozen)
+    ledger = read_ledger(settings.paths.results_dir / "test_ledger.json")
+    check_test_allowed(ledger, run.milestone, git_state().dirty, gold.frozen)
+
+
+def _eval_generation(settings: Settings, run: GenerationRun) -> str:
+    _check_test_run(settings, run)
     conn = connect(settings.paths.db_path)
     cache = ResponseCache(settings.llm.cache_path)
     try:
         resources = _resources(settings, conn, _dense_models(settings))
-        if dry_run or not confirmed:
-            plan = _generation_plan(settings, resources, cache, select_all(gold, split))
-            if dry_run:
+        if run.dry_run or not run.confirmed:
+            plan = _generation_plan(settings, resources, cache, run)
+            if run.dry_run:
                 return plan
             raise RunError(f"{plan}\n\nno call was made: re-run with --yes to run this")
-        generator = _asker(settings, resources, cache, real=True).generator
-        context = RunContext(git=git, versions=_versions())
-        results = run_generation(settings, gold, resources, context, generator, split)
+        models = _asker(settings, resources, cache, real=True, stage3=run.stage3).models
+        context = RunContext(git=git_state(), versions=_versions())
+        results = run_generation(settings, resources, context, models, _subset(settings, run))
     finally:
         cache.close()
         conn.close()
-    return _save_generation(settings, results, milestone, out)
+    return _save_generation(settings, results, run)
 
 
 @app.command("eval")
@@ -726,30 +804,31 @@ def eval_command(  # noqa: PLR0913, PLR0917 - the options of one CLI command
     yes: Annotated[
         bool, typer.Option("--yes", help="generation: accept the estimate and call the API.")
     ] = False,
+    query_set: Annotated[
+        QuerySet, typer.Option("--set", help="generation: the gold split or the abstention set.")
+    ] = QuerySet.GOLD,
+    stage3: Annotated[
+        bool, typer.Option("--stage3", help="generation: also run stage 3 (proposal 007).")
+    ] = False,
 ) -> None:
     """Run an evaluation: the dev ablation, or the decided configuration once on test."""
     try:
         settings = _settings(config)
-        typer.echo(_dispatch_eval(settings, suite, split, milestone, out, (dry_run, yes)))
+        run = GenerationRun(split, query_set, milestone, out, dry_run, yes, stage3)
+        typer.echo(_dispatch_eval(settings, suite, run))
     except KNOWN_ERRORS as exc:
         raise _fail(exc) from exc
 
 
-def _dispatch_eval(  # noqa: PLR0913, PLR0917 - one value per command-line option
-    settings: Settings,
-    suite: Suite,
-    split: Split,
-    milestone: str | None,
-    out: Path | None,
-    mode: tuple[bool, bool],
-) -> str:
+def _dispatch_eval(settings: Settings, suite: Suite, run: GenerationRun) -> str:
+    split, milestone, out = run.split, run.milestone, run.out
     if suite is Suite.GENERATION:
-        return _eval_generation(settings, split, milestone, out, mode)
+        return _eval_generation(settings, run)
     if suite in (Suite.HEADER, Suite.ABSTENTION):
         if split is Split.TEST:
             raise RunError(f"--suite {suite.value} is a dev report; there is no test run")
-        run = _eval_header_dev if suite is Suite.HEADER else _eval_abstention_dev
-        return run(settings, out)
+        runner = _eval_header_dev if suite is Suite.HEADER else _eval_abstention_dev
+        return runner(settings, out)
     if split is Split.DEV:
         return _eval_dev(settings, out)
     if milestone is None:
@@ -793,7 +872,10 @@ def _ask(settings: Settings, question: str, show_context: bool) -> str:
 
 @app.command("smoke-answer")
 def smoke_answer(
-    step: Annotated[str, typer.Option("--step", help="a: invented chunks; b: 3 dev queries.")],
+    step: Annotated[
+        str,
+        typer.Option("--step", help="a: invented chunks; b: 3 dev queries; c: stage 3, invented."),
+    ],
     config: ConfigOption = None,
 ) -> None:
     """Real-API smoke test with a $0.05 cap: shows token usage and cost (owner's pre-flight)."""
@@ -804,8 +886,8 @@ def smoke_answer(
 
 
 def _smoke(settings: Settings, step: str) -> str:
-    if step not in ("a", "b"):
-        raise RunError("--step must be a or b")
+    if step not in ("a", "b", "c"):
+        raise RunError("--step must be a, b or c")
     price = settings.llm.prices[settings.llm.model]
     conn = connect(settings.paths.db_path)
     cache = ResponseCache(settings.llm.cache_path)
@@ -817,6 +899,10 @@ def _smoke(settings: Settings, step: str) -> str:
         if step == "a":
             row = run_step_a(build_generator(capped, build_client(capped, cache)), price)
             return format_rows([row])
+        if step == "c":
+            verifier = build_verifier(capped, build_client(capped, cache))
+            row, detail = run_step_c(verifier, price)
+            return format_rows([row]) + "\n" + detail
         return _smoke_step_b(capped, conn, cache, price)
     finally:
         cache.close()

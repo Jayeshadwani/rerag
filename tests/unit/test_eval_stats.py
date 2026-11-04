@@ -12,6 +12,7 @@ from noterecall.eval.stats import (
     paired_deltas,
     permutation_pvalue,
     simulate_bootstrap,
+    wilson_interval,
 )
 
 
@@ -140,3 +141,26 @@ def test_adopt_follows_adr_010(ci: BootstrapCI, free: bool, expected: bool, frag
     decision = adopt(ci, free)
     assert decision.adopt is expected
     assert fragment in decision.reason
+
+
+def test_wilson_interval_hand_computed() -> None:
+    # 3 of 6, z = 1.959964: p = 0.5, z^2 = 3.84146, z^2/n = 0.640243, denom = 1.640243
+    # centre = (0.5 + 0.320122) / 1.640243 = 0.5
+    # half = 1.959964 * sqrt(0.25/6 + 3.84146/144) / 1.640243
+    #      = 1.959964 * 0.261425 / 1.640243 = 0.31238, so [0.5 - 0.31238, 0.5 + 0.31238]
+    low, high = wilson_interval(3, 6)
+    assert low == pytest.approx(0.1876, abs=1e-3)
+    assert high == pytest.approx(0.8124, abs=1e-3)
+    # 0 of 6: the interval is not degenerate at 0, and stays inside [0, 1]
+    low0, high0 = wilson_interval(0, 6)
+    assert low0 == 0.0
+    assert high0 == pytest.approx(0.3902, abs=1e-3)
+    low6, high6 = wilson_interval(6, 6)
+    assert high6 == 1.0
+    assert low6 == pytest.approx(0.6098, abs=1e-3)
+
+
+def test_wilson_interval_rejects_impossible_counts() -> None:
+    for successes, n in ((1, 0), (-1, 5), (6, 5)):
+        with pytest.raises(EvalStatsError):
+            wilson_interval(successes, n)
