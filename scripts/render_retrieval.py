@@ -367,9 +367,11 @@ def render_generation(result: GenerationResults) -> str:
         ],
     )
     u = result.total_usage
+    both = " (answer calls plus stage 3)" if result.stage3 is not None else ""
     cost = (
-        f"Tokens: input {u.input_tokens} (cached {u.cached_tokens}), output {u.output_tokens} "
-        f"(reasoning {u.reasoning_tokens}). Total cost ${result.total_cost_usd:.4f}."
+        f"Answer calls, tokens: input {u.input_tokens} (cached {u.cached_tokens}), output "
+        f"{u.output_tokens} (reasoning {u.reasoning_tokens}). Total cost{both} "
+        f"${result.total_cost_usd:.4f}."
     )
     meta = result.meta
     footer = (

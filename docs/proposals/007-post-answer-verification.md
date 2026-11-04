@@ -151,3 +151,34 @@ those queries is seen.
 
 Order of work, as agreed: build and test offline, a real smoke call on invented chunks, `--dry-run`, the
 dev run; then stop and show the results. No test run and no PR without the owner's approval.
+
+## Result on dev (rule applied; written after the run)
+
+Run: `eval --suite generation --split dev --stage3`, `results/generation_dev_stage3.json`, answer prompt
+`ee9346d6e271` (its 60 answers were already in the response cache, so stages 1+2 are the same drafts),
+verify prompt `b0d920c8a901`, effort `medium`, cap 4000. Rendered by
+`python scripts/render_results.py results/generation_dev_stage3.json`.
+
+| Measure | stages 1+2 (current) | stages 1+2+3 |
+|---|---|---|
+| answerable queries refused (95% Wilson) | 0/54 [0.00, 0.07] | 0/54 [0.00, 0.07] |
+| unanswerable queries refused (95% Wilson) | 3/6 [0.19, 0.81] | 3/6 [0.19, 0.81] |
+| answered answerable queries citing a gold chunk | 45/54 | 44/54 |
+| claims shown | 169 | 161 |
+| model cost USD per query | 0.00087 | 0.00262 |
+| answer-path model latency p50 / p95, s | 2.44 / 4.33 | 9.07 / 22.63 |
+
+**Rule: not met.** False refusals are 0/54 (the bound was at most 2/54), but unanswerable refusals did not
+strictly improve on 3/6: they are 3/6. Stage 3 is therefore **not adopted** by the pre-registered rule.
+
+What stage 3 did: all 57 answered queries reached it; `answers_question` was true for every one of them,
+including the three unanswerable queries that are still answered (q024, q051, q081); it dropped 8 of 169
+claims (in 7 queries, none of them emptied), made no verifier-invalid or retried calls, and cost $0.1048
+(41,902 output tokens of which 36,800 were reasoning; 735 output tokens per call, against the 1,500 assumed
+in the estimate). One answerable query (q020) lost its only gold-hit claim, so the gold-hit rate went from
+45/54 to 44/54. The cost per query tripled and the median latency of the model calls of an answered query
+went from 2.4 s to 9.1 s.
+
+Not yet done: the abstention set (the owner is still writing it) has not been run through either
+pipeline, and the test split has not been run. The removal of the stage-3 code that the rule asks for is
+waiting for the owner's decision, because the abstention set is to report stage 3 as well.
