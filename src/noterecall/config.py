@@ -119,6 +119,9 @@ class GenerationConfig(BaseModel):
     max_false_refusal_pct: int = Field(ge=0, le=100)
     decided: DecidedThresholds | None = None
     cosine_only: float | None = None  # tau_cos of the "cosine only" reference row
+    # Owner-confirmed gold label errors (query ids), left out of the "adjudicated" view of the
+    # abstention numbers (proposal 006, addendum 2). The gold file itself is never edited.
+    label_errors: tuple[str, ...] = ()
 
 
 class EmbeddingsConfig(BaseModel):

@@ -7,7 +7,7 @@ Every number is read from the results file; nothing is typed by hand. Used by
 from collections.abc import Callable, Sequence
 
 from noterecall.eval.ablation import Comparison, ConfigResult
-from noterecall.eval.run_generation import GenerationResults
+from noterecall.eval.run_generation import GenerationResults, Row, adjudicated_rows
 from noterecall.eval.run_header import HeaderDevResults
 from noterecall.eval.run_retrieval import DevResults, TestResults
 from noterecall.eval.stats import wilson_interval
@@ -247,7 +247,47 @@ def abstention_intervals(result: GenerationResults) -> str:
     )
 
 
-def render_generation(result: GenerationResults) -> str:
+def _rows_table(rows: Sequence[Row]) -> str:
+    return _grid(
+        (
+            "Row",
+            "False refusals (answerable)",
+            "Unanswerable refused",
+            "Precision",
+            "F1 (reference)",
+        ),
+        [
+            [
+                r.name,
+                f"{r.metrics.false_refusals}/{r.metrics.answerable}",
+                f"{r.metrics.caught}/{r.metrics.unanswerable}",
+                "n/a" if r.metrics.precision is None else _f(r.metrics.precision),
+                "n/a" if r.metrics.f1 is None else _f(r.metrics.f1),
+            ]
+            for r in rows
+        ],
+    )
+
+
+def _adjudicated_view(result: GenerationResults, label_errors: Sequence[str]) -> str:
+    """The same rows with the owner-confirmed label errors left out (proposal 006, addendum 2)."""
+    present = sorted(
+        o.query_id for o in result.queries if o.unanswerable and o.query_id in set(label_errors)
+    )
+    if not present:
+        return (
+            "Adjudicated: no owner-confirmed label error is among these queries, so the "
+            "adjudicated view equals the as-labelled one."
+        )
+    rows = adjudicated_rows(result.queries, result.cosine_only_threshold, present)
+    head = (
+        "Adjudicated (owner-confirmed label errors left out of the unanswerable queries: "
+        f"{', '.join(present)}):"
+    )
+    return head + "\n\n" + _rows_table(rows)
+
+
+def render_generation(result: GenerationResults, label_errors: Sequence[str] = ()) -> str:
     """The M6 report: outcomes per kind of query, citation validity, the three rows and the cost."""
     split = result.query_set
     outcome_rows = []
@@ -284,25 +324,8 @@ def render_generation(result: GenerationResults) -> str:
             ],
         ],
     )
-    rows = _grid(
-        (
-            "Row",
-            "False refusals (answerable)",
-            "Unanswerable refused",
-            "Precision",
-            "F1 (reference)",
-        ),
-        [
-            [
-                r.name,
-                f"{r.metrics.false_refusals}/{r.metrics.answerable}",
-                f"{r.metrics.caught}/{r.metrics.unanswerable}",
-                "n/a" if r.metrics.precision is None else _f(r.metrics.precision),
-                "n/a" if r.metrics.f1 is None else _f(r.metrics.f1),
-            ]
-            for r in result.rows
-        ],
-    )
+    rows = _rows_table(result.rows)
+    adjudicated = _adjudicated_view(result, label_errors)
     u = result.total_usage
     cost = (
         f"Tokens: input {u.input_tokens} (cached {u.cached_tokens}), output {u.output_tokens} "
@@ -319,7 +342,14 @@ def render_generation(result: GenerationResults) -> str:
         ("Queries", "n", "Answered", "Refused", "by stage 1", "by the model", "invalid twice"),
         outcome_rows,
     )
-    parts = [outcomes, validity, rows, cost]
+    parts = [
+        outcomes,
+        validity,
+        "As labelled (the gold set exactly as frozen):",
+        rows,
+        adjudicated,
+        cost,
+    ]
     if result.query_set == "abstention":
         parts.append(abstention_intervals(result))
     return "\n\n".join([*parts, footer]) + "\n"

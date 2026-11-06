@@ -14,8 +14,11 @@ from noterecall.eval.ablation import RunKey
 from noterecall.eval.gold import GoldSet, QueryType, Split, freeze_gold
 from noterecall.eval.run_generation import (
     GenerationResults,
+    QueryOutcome,
+    adjudicated_rows,
     decided_pipeline,
     gold_subset,
+    make_rows,
     run_calibration,
     run_generation,
     select_all,
@@ -655,3 +658,57 @@ def test_the_committed_stage_three_record_still_loads_and_says_what_the_addendum
         == {r.name: r.metrics for r in original.rows}["two-stage (ships)"]
     )
     assert record.meta.prompt_versions["answer"] == original.meta.prompt_versions["answer"]
+
+
+def outcome(qid: str, unanswerable: bool, kind: Outcome, cosine: float = 0.5) -> QueryOutcome:
+    return QueryOutcome(
+        query_id=qid, type=QueryType.UNANSWERABLE if unanswerable else QueryType.CONCEPT,
+        unanswerable=unanswerable, top_cosine=cosine, bm25_norm=0.0, outcome=kind, attempts=1,
+        first_attempt=None, claims=0, cites_relevant_chunk=None, usage=Usage(), cost_usd=0.0,
+    )  # fmt: skip
+
+
+def test_the_adjudicated_view_leaves_label_errors_out_of_the_unanswerable_queries() -> None:
+    answered, refused = Outcome.ANSWERED, Outcome.REFUSED_MODEL
+    queries = [
+        outcome("q1", False, answered), outcome("q2", False, answered),
+        outcome("u1", True, answered),  # a label error: the notes answer it
+        outcome("u2", True, answered),  # a label error
+        outcome("u3", True, refused),
+        outcome("u4", True, answered),  # genuinely answered although unanswerable
+    ]  # fmt: skip
+    as_labelled = make_rows(queries, cosine_only=0.0)[2].metrics
+    # 4 unanswerable, 1 refused (u3): 1/4; precision 1/1; F1 = 2*1/(1 refusal + 4 unanswerable)
+    assert (as_labelled.caught, as_labelled.unanswerable) == (1, 4)
+    assert as_labelled.f1 == pytest.approx(2 / 5)
+    adjudicated = adjudicated_rows(queries, 0.0, ["u1", "u2"])[2].metrics
+    # u1 and u2 are out: 2 unanswerable left (u3 refused, u4 answered): 1/2; F1 = 2*1/(1 + 2)
+    assert (adjudicated.caught, adjudicated.unanswerable) == (1, 2)
+    assert adjudicated.f1 == pytest.approx(2 / 3)
+    assert (adjudicated.answerable, adjudicated.false_refusals) == (2, 0)  # answerable unchanged
+    # an answerable id in the list, or an id that is not in the run, changes nothing
+    assert adjudicated_rows(queries, 0.0, ["q1", "zzz"])[2].metrics == as_labelled
+    assert adjudicated_rows(queries, 0.0, [])[2].metrics == as_labelled
+
+
+def test_both_views_are_rendered_and_the_list_comes_from_config_or_the_option(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = RESULTS / "generation_dev_prompt2.json"
+    assert render_main([str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "As labelled (the gold set exactly as frozen):" in out
+    assert "| two-stage (ships) | 0/54 | 3/6 |" in out
+    assert "left out of the unanswerable queries: q024, q051, q081):" in out
+    assert "| stages 1+2 (current pipeline) | 0/54 | 3/3 | 1.000 | 1.000 |" in out
+    assert render_main([str(path), "--label-errors", "none"]) == 0
+    assert "no owner-confirmed label error is among these queries" in capsys.readouterr().out
+    assert render_main([str(path), "--label-errors", "q037,q999"]) == 0
+    only_q037 = capsys.readouterr().out
+    assert "left out of the unanswerable queries: q037):" in only_q037
+    assert "| stages 1+2 (current pipeline) | 0/54 | 2/5 |" in only_q037
+
+
+def test_the_config_lists_the_owner_confirmed_label_errors_by_id() -> None:
+    errors = load_settings(Path("config/default.toml")).generation.label_errors
+    assert errors == ("q024", "q051", "q081")

@@ -10,12 +10,14 @@ by hand. Usage: `python scripts/render_results.py results/corpus_stats.json`.
 import argparse
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
 from noterecall.chunking.report import ChunkStats
+from noterecall.config import load_settings
 from noterecall.eval.run_generation import GenerationResults
 from noterecall.eval.run_header import HeaderDevResults
 from noterecall.eval.run_retrieval import DevResults, TestResults
@@ -242,12 +244,43 @@ def load_results(
     return model.model_validate_json(text)  # type: ignore[return-value]
 
 
+def _label_errors(option: str | None) -> tuple[str, ...]:
+    """The ids to leave out of the adjudicated view: the option, or the config's list."""
+    if option is None:
+        return load_settings(None).generation.label_errors
+    return tuple(i for i in option.split(",") if i and i != "none")
+
+
+def render_report(report: object, label_errors_option: str | None) -> str:
+    """Markdown for any results object this script knows."""
+    if isinstance(report, GenerationResults):
+        return render_generation(report, _label_errors(label_errors_option))
+    renderers: list[tuple[type, Callable[[Any], str]]] = [
+        (ChunkStats, render_chunk_stats),
+        (HeaderDevResults, render_header),
+        (DevResults, render_dev),
+        (TestResults, render_test),
+        (BootstrapValidation, render_bootstrap_validation),
+        (EvidenceReport, lambda r: render_evidence_eval(r.summary)),
+        (CorpusStats, render_corpus_stats),
+    ]
+    for kind, render in renderers:
+        if isinstance(report, kind):
+            return render(report)
+    raise TypeError(f"no renderer for {type(report).__name__}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point: prints Markdown to stdout; exit 1 on a missing or invalid file."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n", maxsplit=1)[0])
     parser.add_argument("path", type=Path)
     parser.add_argument(
         "other", type=Path, nargs="?", help="a second generation file, to render side by side"
+    )
+    parser.add_argument(
+        "--label-errors",
+        help="comma-separated gold query ids to leave out of the adjudicated abstention view "
+        "(default: [generation] label_errors of config/default.toml; 'none' for no ids)",
     )
     args = parser.parse_args(argv)
     try:
@@ -263,22 +296,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         sys.stdout.write(render_generation_pair(report, other))
         return 0
-    if isinstance(report, ChunkStats):
-        sys.stdout.write(render_chunk_stats(report))
-    elif isinstance(report, GenerationResults):
-        sys.stdout.write(render_generation(report))
-    elif isinstance(report, HeaderDevResults):
-        sys.stdout.write(render_header(report))
-    elif isinstance(report, DevResults):
-        sys.stdout.write(render_dev(report))
-    elif isinstance(report, TestResults):
-        sys.stdout.write(render_test(report))
-    elif isinstance(report, BootstrapValidation):
-        sys.stdout.write(render_bootstrap_validation(report))
-    elif isinstance(report, EvidenceReport):
-        sys.stdout.write(render_evidence_eval(report.summary))
-    else:
-        sys.stdout.write(render_corpus_stats(report))
+    sys.stdout.write(render_report(report, args.label_errors))
     return 0
 
 

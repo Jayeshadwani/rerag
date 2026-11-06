@@ -105,6 +105,9 @@ max_chunks = 6
 max_output_tokens = 1500
 max_false_refusal_pct = 5
 # tau_cos of the "cosine only" reference row (same calibration, BM25 axis always true).
+# Owner adjudication (proposal 006, addendum 2): gold queries that were labelled unanswerable by
+# mistake. They are left out of the "adjudicated" view; the gold file is unchanged.
+label_errors = ["q024", "q051", "q081"]
 cosine_only = -0.4020613431930542
 
 # Data-decided by the M6 dev calibration (results/abstention_calibration_dev.json), by the rule

@@ -286,6 +286,18 @@ def make_rows(outcomes: Sequence[QueryOutcome], cosine_only: float) -> tuple[Row
     return tuple(rows)
 
 
+def adjudicated_rows(
+    outcomes: Sequence[QueryOutcome], cosine_only: float, label_errors: Sequence[str]
+) -> tuple[Row, ...]:
+    """The rows with the owner-confirmed label errors left out of the unanswerable queries.
+
+    Only unanswerable queries can be label errors; an id in the list that is answerable, or not in
+    the run, changes nothing. The same ids are removed from every row."""
+    excluded = set(label_errors)
+    kept = [o for o in outcomes if not (o.unanswerable and o.query_id in excluded)]
+    return make_rows(kept, cosine_only)
+
+
 def run_generation(
     settings: Settings,
     resources: Resources,
