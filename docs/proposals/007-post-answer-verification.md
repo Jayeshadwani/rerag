@@ -1,6 +1,7 @@
 # Proposal 007: stage 3, post-answer verification (amends ADR-011)
 
-Status: **approved by the owner** (answers to the three questions below are recorded in the last section).
+Status: **approved by the owner. Evaluated on dev, not adopted (the pre-registered rule was not met), and
+removed from the code: see Addendum 1.** (The owner's answers to the three questions are recorded below.)
 Changes (if approved): the abstention part of ADR-011 (already amended by proposals 003 and 006),
 the PLAN M6 row, `[generation]` config, and the evaluation tooling (a separate abstention set).
 
@@ -179,6 +180,35 @@ in the estimate). One answerable query (q020) lost its only gold-hit claim, so t
 45/54 to 44/54. The cost per query tripled and the median latency of the model calls of an answered query
 went from 2.4 s to 9.1 s.
 
-Not yet done: the abstention set (the owner is still writing it) has not been run through either
-pipeline, and the test split has not been run. The removal of the stage-3 code that the rule asks for is
-waiting for the owner's decision, because the abstention set is to report stage 3 as well.
+## Addendum 1: stage 3 rejected on dev and removed from the code
+
+Decision (the owner's): the rule of this proposal says a rejected stage 3 is removed from `src/`, and it is.
+The code and the `verify` prompt are in git history: the last commit that has them is `4e877d8`
+(`git checkout 4e877d8`; there `python scripts/render_results.py results/generation_dev_stage3.json`
+prints the table above). `results/generation_dev_stage3.json` stays as the record, and a test checks that
+it still loads and says what this addendum says.
+
+What was measured on dev (60 queries, 54 answerable and 6 unanswerable; all numbers from the results file):
+
+- **Abstention: no change.** Unanswerable queries refused 3/6 before and 3/6 after stage 3. The rule needed
+  strictly more than 3/6.
+- **False refusals: none.** 0/54 before and after (the bound was at most 2/54).
+- **The verifier said `answers_question = true` for all 57 answered queries**, including q024, q051 and
+  q081, the three unanswerable queries that are still answered. It dropped 8 of 169 claims (in 7 queries)
+  and never emptied an answer, so it never refused anything.
+- **Cost about 3 times:** model cost per query 0.00087 USD before, 0.00262 USD after (3.0 times).
+- **Latency about 4 times:** the model calls of an answered query took a median of 2.44 s without stage 3
+  and 9.07 s with it (3.7 times); the 95th percentile went from 4.33 s to 22.63 s (5.2 times). Most of the
+  extra is reasoning: 36,800 of the 41,902 output tokens of stage 3 were reasoning tokens.
+- **Gold-hit:** 45/54 before, 44/54 after (one answerable query, q020, lost its only gold-hit claim).
+
+What this does and does not show. Within this corpus and with the same model as verifier, near-topic
+unanswerable queries look answerable to a second reading of the same notes. This is one run, one verifier
+prompt and one effort level on six unanswerable queries; it says nothing about other verifiers, other
+models or other corpora, and it was not tested on the test split or on the abstention set.
+
+State after this addendum: abstention rests on the model's `insufficient` flag (stage 2) alone, as after
+proposal 006. ADR-011 is unchanged by this proposal, because stage 3 was not adopted. The abstention set
+that the owner is writing remains a report-only set for the current pipeline (stages 1 and 2); the tooling
+for it stays. The per-call reasoning effort in the LLM layer and the API-latency record also stay (they
+are general features of the layer, tested without stage 3).

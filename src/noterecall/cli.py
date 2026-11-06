@@ -65,20 +65,17 @@ from noterecall.eval.run_retrieval import (
     run_test,
 )
 from noterecall.generate.abstain import Choice, Thresholds
-from noterecall.generate.ask import Asker, Models
+from noterecall.generate.ask import Asker
 from noterecall.generate.commands import (
     format_answer,
     format_context,
     format_plan,
     plan_generation,
-    plan_stage3,
 )
 from noterecall.generate.runtime import (
-    CacheOnly,
     NoCalls,
     build_client,
     build_generator,
-    build_verifier,
     model_tokenizer,
     spent_so_far,
 )
@@ -87,7 +84,6 @@ from noterecall.generate.smoke import (
     choose_step_b,
     format_rows,
     run_step_a,
-    run_step_c,
     smoke_row,
 )
 from noterecall.index.embeddings import EmbeddingService
@@ -658,9 +654,7 @@ def _describe_choice(label: str, choice: Choice) -> str:
     )
 
 
-def _asker(
-    settings: Settings, resources: Resources, cache: ResponseCache, real: bool, stage3: bool = False
-) -> Asker:
+def _asker(settings: Settings, resources: Resources, cache: ResponseCache, real: bool) -> Asker:
     """An asker on the decided pipeline; `real` is False for estimates (no API client)."""
     thresholds = settings.generation.decided
     if thresholds is None:
@@ -668,15 +662,11 @@ def _asker(
     pipeline, cap = decided_pipeline(settings, resources)
     chunks = {c.id: c for c in resources.chunks(cap, "structural")}
     client = build_client(settings, cache) if real else NoCalls()
-    models = Models(
-        build_generator(settings, client),
-        build_verifier(settings, client) if stage3 or settings.generation.stage3 else None,
-    )
     return Asker(
         pipeline,
         chunks,
         Thresholds(cosine=thresholds.cosine, bm25=thresholds.bm25),
-        models,
+        build_generator(settings, client),
         settings.generation.max_chunks,
     )
 
@@ -691,15 +681,14 @@ class GenerationRun:
     out: Path | None
     dry_run: bool
     confirmed: bool
-    stage3: bool
 
 
 def _generation_plan(
     settings: Settings, resources: Resources, cache: ResponseCache, run: GenerationRun
 ) -> str:
-    """The dry-run text (no API client is built): the answer calls, and stage 3 if asked."""
+    """The dry-run text (no API client is built)."""
     subset = _subset(settings, run)
-    asker = _asker(settings, resources, cache, real=False, stage3=run.stage3)
+    asker = _asker(settings, resources, cache, real=False)
     counter = model_tokenizer(settings.llm.model).count
     effort = settings.llm.reasoning_effort
 
@@ -707,19 +696,6 @@ def _generation_plan(
         return cache.get(cache_key(prompt, prompt.reasoning_effort or effort)) is not None
 
     plan = plan_generation(asker, subset.queries, settings, counter, is_cached)
-    if run.stage3:
-        cap = decided_pipeline(settings, resources)[1]
-        chunks = {c.id: c for c in resources.chunks(cap, "structural")}
-        offline = CacheOnly(cache, effort)
-        plan = plan_stage3(
-            plan,
-            asker,
-            build_generator(settings, offline),
-            build_verifier(settings, NoCalls()),
-            (subset.queries, chunks),
-            settings,
-            (counter, is_cached),
-        )
     return format_plan(plan, spent_so_far(settings, cache), settings.llm.max_usd)
 
 
@@ -736,10 +712,9 @@ def _save_generation(settings: Settings, results: GenerationResults, run: Genera
     stem = "generation_" + (
         "abstention" if run.query_set is QuerySet.ABSTENTION else results.query_set
     )
-    suffix = "_stage3" if results.stage3 is not None else ""
     if run.split is Split.TEST and run.query_set is QuerySet.GOLD:
         stem = f"generation_test_{run.milestone}"
-    target = run.out if run.out is not None else settings.paths.results_dir / f"{stem}{suffix}.json"
+    target = run.out if run.out is not None else settings.paths.results_dir / f"{stem}.json"
     _write_json(target, results.model_dump_json(indent=2))
     if run.split is Split.TEST and run.query_set is QuerySet.GOLD and run.milestone is not None:
         git = results.meta.git
@@ -775,9 +750,9 @@ def _eval_generation(settings: Settings, run: GenerationRun) -> str:
             if run.dry_run:
                 return plan
             raise RunError(f"{plan}\n\nno call was made: re-run with --yes to run this")
-        models = _asker(settings, resources, cache, real=True, stage3=run.stage3).models
+        generator = _asker(settings, resources, cache, real=True).generator
         context = RunContext(git=git_state(), versions=_versions())
-        results = run_generation(settings, resources, context, models, _subset(settings, run))
+        results = run_generation(settings, resources, context, generator, _subset(settings, run))
     finally:
         cache.close()
         conn.close()
@@ -807,14 +782,11 @@ def eval_command(  # noqa: PLR0913, PLR0917 - the options of one CLI command
     query_set: Annotated[
         QuerySet, typer.Option("--set", help="generation: the gold split or the abstention set.")
     ] = QuerySet.GOLD,
-    stage3: Annotated[
-        bool, typer.Option("--stage3", help="generation: also run stage 3 (proposal 007).")
-    ] = False,
 ) -> None:
     """Run an evaluation: the dev ablation, or the decided configuration once on test."""
     try:
         settings = _settings(config)
-        run = GenerationRun(split, query_set, milestone, out, dry_run, yes, stage3)
+        run = GenerationRun(split, query_set, milestone, out, dry_run, yes)
         typer.echo(_dispatch_eval(settings, suite, run))
     except KNOWN_ERRORS as exc:
         raise _fail(exc) from exc
@@ -874,7 +846,7 @@ def _ask(settings: Settings, question: str, show_context: bool) -> str:
 def smoke_answer(
     step: Annotated[
         str,
-        typer.Option("--step", help="a: invented chunks; b: 3 dev queries; c: stage 3, invented."),
+        typer.Option("--step", help="a: invented chunks; b: 3 dev queries."),
     ],
     config: ConfigOption = None,
 ) -> None:
@@ -886,8 +858,8 @@ def smoke_answer(
 
 
 def _smoke(settings: Settings, step: str) -> str:
-    if step not in ("a", "b", "c"):
-        raise RunError("--step must be a, b or c")
+    if step not in ("a", "b"):
+        raise RunError("--step must be a or b")
     price = settings.llm.prices[settings.llm.model]
     conn = connect(settings.paths.db_path)
     cache = ResponseCache(settings.llm.cache_path)
@@ -899,10 +871,6 @@ def _smoke(settings: Settings, step: str) -> str:
         if step == "a":
             row = run_step_a(build_generator(capped, build_client(capped, cache)), price)
             return format_rows([row])
-        if step == "c":
-            verifier = build_verifier(capped, build_client(capped, cache))
-            row, detail = run_step_c(verifier, price)
-            return format_rows([row]) + "\n" + detail
         return _smoke_step_b(capped, conn, cache, price)
     finally:
         cache.close()

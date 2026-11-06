@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 import structlog
-from test_generation_flow import answer_with_first_note, verdict_json
+from test_generation_flow import answer_with_first_note
 from typer.testing import CliRunner, Result
 
 from helpers_retrieval import GIT, MARKER, make_gold
@@ -16,7 +16,6 @@ from noterecall.eval.ledger import read_ledger
 from noterecall.eval.run_generation import CalibrationResults, GenerationResults
 from noterecall.generate import runtime
 from noterecall.llm.cache import ResponseCache
-from noterecall.llm.client import Prompt
 from noterecall.llm.fake import FakeTransport
 from noterecall.models import Cell
 
@@ -33,14 +32,9 @@ rerank = false
 """
 
 
-def respond(prompt: Prompt) -> str:
-    """The fake model: answers cite the first note; the verifier supports every claim."""
-    return verdict_json(prompt) if prompt.name == "verify" else answer_with_first_note(prompt)
-
-
 @pytest.fixture
 def transport(monkeypatch: pytest.MonkeyPatch, tiny_tokenizer: Tokenizer) -> FakeTransport:
-    fake = FakeTransport(respond)
+    fake = FakeTransport(answer_with_first_note)
     monkeypatch.setattr(runtime, "create_transport", lambda *_args: fake)
     monkeypatch.setattr(cli, "model_tokenizer", lambda _model: tiny_tokenizer)
     monkeypatch.setattr(cli, "git_state", lambda: GIT)
@@ -199,7 +193,7 @@ def test_smoke_a_needs_no_notes_and_b_picks_three_dev_queries_with_a_spend_cap(
     assert MARKER not in b.stdout
     bad = run(config, "smoke-answer", "--step", "d")
     assert bad.exit_code == 1
-    assert "--step must be a, b or c" in bad.stderr
+    assert "--step must be a or b" in bad.stderr
     cache = ResponseCache(load_settings(config).llm.cache_path)
     assert cache.spend()  # the calls were recorded in the ledger
 
@@ -218,26 +212,6 @@ def test_the_model_tokenizer_is_the_encoding_tiktoken_maps_to_the_model() -> Non
     assert runtime.model_tokenizer("gpt-5-mini").name == "o200k_base"
 
 
-def test_a_stage_three_dry_run_prices_the_verifier_and_a_real_run_writes_its_own_file(
-    config: Path, notebooks: Notebooks, fake_models: list[str], transport: FakeTransport
-) -> None:
-    prepare(config, notebooks, NEVER)
-    dry = run(config, "eval", "--suite", "generation", "--stage3", "--dry-run")
-    assert dry.exit_code == 0, dry.output
-    assert "stage 3 calls:" in dry.stdout
-    assert "total estimated cost" in dry.stdout
-    assert transport.prompts == []
-    done = run(config, "eval", "--suite", "generation", "--stage3", "--yes")
-    assert done.exit_code == 0, done.output
-    target = load_settings(config).paths.results_dir / "generation_dev_stage3.json"
-    parsed = GenerationResults.model_validate_json(target.read_text(encoding="utf-8"))
-    assert parsed.stage3 is not None
-    assert parsed.rows[-1].name == "stages 1+2+3"
-    assert parsed.verify_prompt_version is not None
-    assert MARKER not in target.read_text(encoding="utf-8")
-    assert not (load_settings(config).paths.results_dir / "generation_dev.json").exists()
-
-
 def test_the_abstention_set_is_run_without_a_split_and_without_the_test_ledger(
     config: Path,
     notebooks: Notebooks,
@@ -252,10 +226,10 @@ def test_the_abstention_set_is_run_without_a_split_and_without_the_test_ledger(
     gold = make_gold(notebooks)
     unfrozen = GoldSet(queries=tuple(q.model_copy(update={"split": None}) for q in gold.queries))
     save_gold(unfrozen, settings.paths.abstention_path)
-    args = ("eval", "--suite", "generation", "--set", "abstention", "--stage3", "--yes")
+    args = ("eval", "--suite", "generation", "--set", "abstention", "--yes")
     done = run(config, *args)
     assert done.exit_code == 0, done.output
-    target = settings.paths.results_dir / "generation_abstention_stage3.json"
+    target = settings.paths.results_dir / "generation_abstention.json"
     parsed = GenerationResults.model_validate_json(target.read_text(encoding="utf-8"))
     assert parsed.query_set == "abstention"
     assert parsed.meta.split is None
@@ -263,31 +237,3 @@ def test_the_abstention_set_is_run_without_a_split_and_without_the_test_ledger(
     assert not (settings.paths.results_dir / "test_ledger.json").exists()
     test = run(config, *args, "--split", "test")  # a split means nothing for this set
     assert test.exit_code == 0
-
-
-def test_with_stage_three_on_in_config_ask_verifies_before_showing_an_answer(
-    config: Path, notebooks: Notebooks, fake_models: list[str], transport: FakeTransport
-) -> None:
-    prepare(config, notebooks, NEVER)
-    config.write_text(
-        config.read_text(encoding="utf-8").replace(
-            "verify_effort", "stage3 = true\nverify_effort", 1
-        ),
-        encoding="utf-8",
-    )
-    result = run(config, "ask", "groupby mean of each key")
-    assert result.exit_code == 0, result.output
-    assert "Sources:" in result.stdout
-    assert [p.name for p in transport.prompts] == ["answer", "verify"]
-    assert transport.prompts[1].reasoning_effort == "medium"
-
-
-def test_smoke_step_c_runs_stage_three_on_invented_chunks(
-    config: Path, notebooks: Notebooks, fake_models: list[str], transport: FakeTransport
-) -> None:
-    prepare(config, notebooks, NEVER)
-    result = run(config, "smoke-answer", "--step", "c")
-    assert result.exit_code == 0, result.output
-    assert "step C (stage 3, invented chunks)" in result.stdout
-    assert "answers_question=True; kept 2 of 2 claims" in result.stdout
-    assert [p.name for p in transport.prompts] == ["verify"]

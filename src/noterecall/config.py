@@ -117,9 +117,6 @@ class GenerationConfig(BaseModel):
     max_chunks: int = Field(ge=1)
     max_output_tokens: int = Field(ge=1)
     max_false_refusal_pct: int = Field(ge=0, le=100)
-    verify_effort: Literal["minimal", "low", "medium", "high"]  # stage 3 (proposal 007)
-    verify_max_output_tokens: int = Field(ge=1)
-    stage3: bool = False  # on only if the dev rule of proposal 007 adopted it
     decided: DecidedThresholds | None = None
     cosine_only: float | None = None  # tau_cos of the "cosine only" reference row
 

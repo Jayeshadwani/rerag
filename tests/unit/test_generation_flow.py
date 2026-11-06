@@ -13,6 +13,7 @@ from noterecall.config import Settings, load_settings
 from noterecall.eval.ablation import RunKey
 from noterecall.eval.gold import GoldSet, QueryType, Split, freeze_gold
 from noterecall.eval.run_generation import (
+    GenerationResults,
     decided_pipeline,
     gold_subset,
     run_calibration,
@@ -23,29 +24,25 @@ from noterecall.eval.run_generation import (
 from noterecall.eval.run_retrieval import QueryRef, RunError, select_queries
 from noterecall.generate.abstain import Thresholds, refusal_metrics
 from noterecall.generate.answer import CitedClaim, Generator, Outcome, Response
-from noterecall.generate.ask import Asker, AskResult, Models
+from noterecall.generate.ask import Asker, AskResult
 from noterecall.generate.citations import Answer
 from noterecall.generate.commands import (
-    GenerationPlan,
     format_answer,
     format_context,
     format_plan,
     plan_generation,
-    plan_stage3,
 )
 from noterecall.generate.estimate import estimate_generation
-from noterecall.generate.runtime import CacheOnly, NoCalls
+from noterecall.generate.runtime import NoCalls
 from noterecall.generate.smoke import (
     choose_step_b,
     format_rows,
     run_step_a,
-    run_step_c,
     smoke_row,
     synthetic_chunks,
 )
-from noterecall.generate.verify import Verifier
-from noterecall.llm.cache import ResponseCache, Stored, cache_key
-from noterecall.llm.client import LLMCallError, LLMOutputError, Prompt, Usage
+from noterecall.llm.cache import ResponseCache
+from noterecall.llm.client import LLMCallError, Prompt, Usage
 from noterecall.llm.cost import CostMeter
 from noterecall.llm.fake import FakeTransport, Responder
 from noterecall.llm.prompts import load_prompt
@@ -175,7 +172,7 @@ def make_asker(
     chunks = {c.id: c for c in resources.chunks(cap, "structural")}
     generator, transport = make_generator(settings, tmp_path, responder)
     asker = Asker(pipeline, chunks, Thresholds(cosine=thresholds[0], bm25=thresholds[1]),
-                  Models(generator), settings.generation.max_chunks)  # fmt: skip
+                  generator, settings.generation.max_chunks)  # fmt: skip
     return asker, transport, chunks
 
 
@@ -246,9 +243,7 @@ def test_the_generation_run_reports_three_rows_and_validity_without_any_text(
     resources = make_resources(settings, notebooks, tiny_tokenizer)
     generator, transport = make_generator(settings, tmp_path)
     gold = make_gold(notebooks)
-    results = run_generation(
-        settings, resources, CONTEXT, Models(generator), gold_subset(gold, Split.TEST)
-    )
+    results = run_generation(settings, resources, CONTEXT, generator, gold_subset(gold, Split.TEST))
     queries = select_all(gold, Split.TEST)
     assert [o.query_id for o in results.queries] == [q.id for q in queries]
     assert [r.name for r in results.rows] == [
@@ -277,9 +272,7 @@ def test_with_everything_refused_the_run_calls_no_model_and_counts_the_refusals(
     resources = make_resources(settings, notebooks, tiny_tokenizer)
     generator, transport = make_generator(settings, tmp_path)
     gold = make_gold(notebooks)
-    results = run_generation(
-        settings, resources, CONTEXT, Models(generator), gold_subset(gold, Split.DEV)
-    )
+    results = run_generation(settings, resources, CONTEXT, generator, gold_subset(gold, Split.DEV))
     assert transport.prompts == []
     stage1 = results.rows[1].metrics
     assert stage1.false_refusals == stage1.answerable  # every answerable query was refused
@@ -302,9 +295,7 @@ def test_the_model_flag_and_the_validator_are_counted_in_the_two_stage_row(
         return answer_with_first_note(p)
 
     generator, _ = make_generator(settings, tmp_path, responder)
-    results = run_generation(
-        settings, resources, CONTEXT, Models(generator), gold_subset(gold, Split.DEV)
-    )
+    results = run_generation(settings, resources, CONTEXT, generator, gold_subset(gold, Split.DEV))
     two = results.rows[2].metrics
     assert two.caught == two.unanswerable > 0  # the model caught them
     assert two.false_refusals == 0
@@ -323,7 +314,7 @@ def test_the_run_needs_the_calibrated_thresholds_in_config(
             settings,
             resources,
             CONTEXT,
-            Models(generator),
+            generator,
             gold_subset(make_gold(notebooks), Split.DEV),
         )
 
@@ -443,7 +434,6 @@ def test_two_claims_citing_the_same_chunk_share_one_source_number() -> None:
     )
     result = AskResult(
         response=response,
-        drafted=response,
         signals=AbstentionSignals(top_cosine=0.5, bm25_norm=0.1),
         context_ids=("a", "b"),
     )
@@ -498,7 +488,7 @@ def test_the_cosine_only_row_applies_the_cosine_only_threshold_to_the_cosine(
         settings,
         resources,
         CONTEXT,
-        Models(generator),
+        generator,
         gold_subset(make_gold(notebooks), Split.DEV),
     )
     refused = [(o.unanswerable, o.top_cosine < 0.6) for o in results.queries]
@@ -526,7 +516,7 @@ def test_the_generation_results_render_with_counts_per_kind_of_query(
         settings,
         resources,
         CONTEXT,
-        Models(generator),
+        generator,
         gold_subset(make_gold(notebooks), Split.DEV),
     )
     path = tmp_path / "generation_dev.json"
@@ -561,7 +551,7 @@ def test_two_generation_runs_render_side_by_side_and_other_pairs_are_refused(
         (tmp_path / name[0]).mkdir()
         generator, _ = make_generator(settings, tmp_path / name[0], responder)
         results = run_generation(
-            settings, resources, CONTEXT, Models(generator), gold_subset(gold, Split.DEV)
+            settings, resources, CONTEXT, generator, gold_subset(gold, Split.DEV)
         )
         (tmp_path / name).write_text(results.model_dump_json(), encoding="utf-8")
         paths.append(str(tmp_path / name))
@@ -576,318 +566,92 @@ def test_two_generation_runs_render_side_by_side_and_other_pairs_are_refused(
     assert "both are generation results" in capsys.readouterr().err
 
 
-# --------------------------------------------------------------------------------- stage 3
+# ------------------------------------------------------------------ query sets and latency
 
 
-def verdict_json(prompt: Prompt, answers: bool = True, supported: bool = True) -> str:
-    claims = re.findall(r"^(\d+)\. ", prompt.variable, flags=re.MULTILINE)
-    entries = [{"claim": int(n), "supported": supported} for n in claims]
-    return json.dumps({"answers_question": answers, "claims": entries})
-
-
-def staged_responder(refuse_unanswerable: bool = False, drop_all: bool = False) -> Responder:
-    """Answer with the first note; the verifier refuses the synthetic unanswerable queries
-    ("nothing" in the question) when asked to, and marks every claim unsupported if `drop_all`."""
+def test_a_set_without_a_split_reports_its_own_label_and_wilson_intervals(
+    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    settings = decided_settings(load_settings(config), NEVER_REFUSE)
+    resources = make_resources(settings, notebooks, tiny_tokenizer)
 
     def respond(prompt: Prompt) -> str:
-        if prompt.name == "verify":
-            nothing = "nothing" in prompt.variable
-            return verdict_json(prompt, answers=not (refuse_unanswerable and nothing),
-                                supported=not drop_all)  # fmt: skip
+        if "nothing" in prompt.variable:  # the synthetic unanswerable queries
+            return json.dumps({"insufficient": True, "claims": []})
         return answer_with_first_note(prompt)
 
-    return respond
-
-
-def make_models(
-    settings: Settings, tmp_path: Path, responder: Responder
-) -> tuple[Models, FakeTransport]:
-    transport = FakeTransport(responder)
-    meter = CostMeter(settings.llm.prices, settings.llm.max_usd)
-    client = CachingClient(
-        transport, ResponseCache(tmp_path / "m.sqlite"), meter, settings.llm.reasoning_effort
-    )
-    generator = Generator(client, load_prompt("answer"), settings.llm.model, 100)
-    verifier = Verifier(client, load_prompt("verify"), settings.llm.model, ("medium", 400))
-    return Models(generator, verifier), transport
-
-
-def test_the_run_compares_the_current_pipeline_with_stage_three_on_the_same_answers(
-    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path
-) -> None:
-    settings = decided_settings(load_settings(config), NEVER_REFUSE)
-    resources = make_resources(settings, notebooks, tiny_tokenizer)
-    models, transport = make_models(settings, tmp_path, staged_responder(refuse_unanswerable=True))
-    gold = make_gold(notebooks)
-    results = run_generation(settings, resources, CONTEXT, models, gold_subset(gold, Split.DEV))
-    assert [r.name for r in results.rows] == [
-        "cosine only", "cosine + BM25 (stage 1)", "stages 1+2 (current pipeline)", "stages 1+2+3"
-    ]  # fmt: skip
-    current, with3 = results.rows[2].metrics, results.rows[3].metrics
-    assert current.caught == 0  # the answer stage refused nothing
-    assert with3.caught == with3.unanswerable > 0  # stage 3 refused every unanswerable query
-    assert with3.false_refusals == 0
-    s3 = results.stage3
-    assert s3 is not None
-    assert (s3.refused_by_verifier, s3.refused_unsupported, s3.refused_verifier_invalid) == (
-        with3.unanswerable, 0, 0
-    )  # fmt: skip
-    assert s3.calls_queries == len(
-        results.queries
-    )  # every query was answered, so all reached stage 3
-    assert s3.claims_dropped == sum(o.stage3.claims_dropped for o in results.queries if o.stage3)
-    assert results.verify_prompt_version == models.verifier.prompt_version  # type: ignore[union-attr]
-    assert results.meta.prompt_versions["verify"] == results.verify_prompt_version
-    # the fields next to `outcome` still describe the pipeline without stage 3
-    assert all(o.outcome is Outcome.ANSWERED for o in results.queries)
-    assert results.total_cost_usd == pytest.approx(
-        sum(o.cost_usd for o in results.queries) + s3.cost_usd
-    )
-    assert s3.cost_usd > 0
-    assert sum(1 for p in transport.prompts if p.name == "verify") <= len(results.queries)
-    assert all(p.reasoning_effort == "medium" for p in transport.prompts if p.name == "verify")
-    assert all(p.reasoning_effort is None for p in transport.prompts if p.name == "answer")
-
-
-def test_stage_three_dropping_every_claim_refuses_answerable_queries_and_it_is_counted(
-    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path
-) -> None:
-    settings = decided_settings(load_settings(config), NEVER_REFUSE)
-    resources = make_resources(settings, notebooks, tiny_tokenizer)
-    models, _ = make_models(settings, tmp_path, staged_responder(drop_all=True))
-    results = run_generation(
-        settings, resources, CONTEXT, models, gold_subset(make_gold(notebooks), Split.DEV)
-    )
-    with3 = results.rows[3].metrics
-    assert with3.false_refusals == with3.answerable  # everything answerable was refused
-    s3 = results.stage3
-    assert s3 is not None
-    assert s3.refused_unsupported == len(results.queries)
-    assert s3.claims_dropped == s3.claims_in > 0
-    assert s3.answered_answerable == 0
-
-
-def test_without_a_verifier_there_is_no_stage_three_in_the_results(
-    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path
-) -> None:
-    settings = decided_settings(load_settings(config), NEVER_REFUSE)
-    resources = make_resources(settings, notebooks, tiny_tokenizer)
-    generator, _ = make_generator(settings, tmp_path)
-    results = run_generation(
-        settings,
-        resources,
-        CONTEXT,
-        Models(generator),
-        gold_subset(make_gold(notebooks), Split.DEV),
-    )
-    assert results.stage3 is None
-    assert results.verify_prompt_version is None
-    assert [r.name for r in results.rows][-1] == "stages 1+2 (current pipeline)"
-    assert all(o.stage3 is None for o in results.queries)
-
-
-def test_a_set_without_a_split_reports_its_own_label(
-    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path
-) -> None:
-    settings = decided_settings(load_settings(config), NEVER_REFUSE)
-    resources = make_resources(settings, notebooks, tiny_tokenizer)
-    models, _ = make_models(settings, tmp_path, staged_responder())
+    generator, _ = make_generator(settings, tmp_path, respond)
     gold = make_gold(notebooks)
     unfrozen = GoldSet(queries=tuple(q.model_copy(update={"split": None}) for q in gold.queries))
     results = run_generation(
-        settings, resources, CONTEXT, models, set_subset(unfrozen, "abstention")
+        settings, resources, CONTEXT, generator, set_subset(unfrozen, "abstention")
     )
     assert results.query_set == "abstention"
     assert results.meta.split is None
     assert len(results.queries) == len(gold.queries)
     with pytest.raises(RunError, match="needs both answerable and unanswerable"):
         set_subset(GoldSet(queries=unfrozen.queries[:1]), "abstention")
-
-
-def test_the_dry_run_prices_stage_three_from_cached_answers_and_assumes_the_rest(
-    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path
-) -> None:
-    settings = decided_settings(load_settings(config), NEVER_REFUSE)
-    resources = make_resources(settings, notebooks, tiny_tokenizer)
-    pipeline, cap = decided_pipeline(settings, resources)
-    chunks = {c.id: c for c in resources.chunks(cap, "structural")}
-    models, transport = make_models(settings, tmp_path, staged_responder())
-    asker = Asker(pipeline, chunks, Thresholds(cosine=-1.0, bm25=-1.0), models, 2)
-    queries = select_all(make_gold(notebooks), Split.DEV)
-    cache = ResponseCache(tmp_path / "m.sqlite")
-    effort = settings.llm.reasoning_effort
-
-    def is_cached(p: Prompt) -> bool:
-        return cache.get(cache_key(p, p.reasoning_effort or effort)) is not None
-
-    def offline() -> Generator:
-        return Generator(CacheOnly(cache, effort), load_prompt("answer"), settings.llm.model, 100)
-
-    def plan_with_stage3() -> GenerationPlan:
-        base = plan_generation(asker, queries, settings, tiny_tokenizer.count, is_cached)
-        return plan_stage3(base, asker, offline(), models.verifier, (queries, chunks),  # type: ignore[arg-type]
-                           settings, (tiny_tokenizer.count, is_cached))  # fmt: skip
-
-    before = plan_with_stage3()
-    assert before.stage3_assumed == len(queries)  # no answer is cached: all priced as worst case
-    assert before.stage3 is not None
-    assert before.stage3.calls == len(queries)
-    for q in queries:  # now really answer and verify everything (with the fake)
-        asker.ask(q.text)
-    calls = len(transport.prompts)
-    after = plan_with_stage3()
-    assert len(transport.prompts) == calls  # planning made no model call
-    assert after.stage3_assumed == 0
-    assert after.answer.calls == 0
-    assert after.stage3 is not None
-    assert after.stage3.calls == 0
-    assert after.stage3_cached == len(queries)
-    text = format_plan(after, 0.0, 2.0)
-    assert "stage 3 calls:" in text
-    assert "total estimated cost" in text
-
-
-def test_cache_only_answers_hits_and_refuses_misses(tmp_path: Path) -> None:
-    cache = ResponseCache(tmp_path / "c.sqlite")
-    prompt = Prompt(name="p", version="v", model="m", instructions="i", shared="", variable="v",
-                    max_output_tokens=5)  # fmt: skip
-    reader = CacheOnly(cache, "minimal")
-    with pytest.raises(LLMCallError, match="not in the response cache"):
-        reader.complete_json(prompt, Answer)
-    body = json.dumps({"insufficient": True, "claims": []})
-    cache.put(cache_key(prompt, "minimal"), prompt, Stored(body, Usage(input_tokens=3), 1.25))
-    hit = reader.complete_json(prompt, Answer)
-    assert hit.parsed.insufficient
-    assert hit.from_cache
-    assert hit.api_latency_s == 1.25
-    medium = prompt.model_copy(update={"reasoning_effort": "medium"})
-    with pytest.raises(LLMCallError):
-        reader.complete_json(medium, Answer)  # another effort is another key
-    cache.put(cache_key(medium, "medium"), medium, Stored("{}", Usage(), 0.0))
-    with pytest.raises(LLMOutputError, match="no longer parses"):
-        reader.complete_json(medium, Answer)
-
-
-def test_step_c_runs_the_verifier_on_invented_chunks_and_reports_what_it_did(
-    tmp_path: Path,
-) -> None:
-    settings = load_settings(Path("config/default.toml"))
-    models, transport = make_models(settings, tmp_path, staged_responder())
-    assert models.verifier is not None
-    row, detail = run_step_c(models.verifier, settings.llm.prices[settings.llm.model])
-    assert row.label.startswith("step C")
-    assert row.outcome == "answered"
-    assert "answers_question=True; kept 2 of 2 claims" in detail
-    sent = transport.prompts[0].variable
-    assert "plt.hist draws a pie chart." in sent
-    assert "demo/plots.ipynb" in sent
-    assert "train_test_split" not in sent  # the uncited chunk was not shown
-    assert row.cost_usd > 0
-
-
-def test_the_stage_three_report_shows_both_pipelines_with_intervals_cost_and_latency(
-    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:  # fmt: skip
-    settings = decided_settings(load_settings(config), NEVER_REFUSE)
-    resources = make_resources(settings, notebooks, tiny_tokenizer)
-    models, _ = make_models(settings, tmp_path, staged_responder(refuse_unanswerable=True))
-    results = run_generation(
-        settings, resources, CONTEXT, models, gold_subset(make_gold(notebooks), Split.DEV)
-    )
-    path = tmp_path / "generation_dev_stage3.json"
+    path = tmp_path / "generation_abstention.json"
     path.write_text(results.model_dump_json(), encoding="utf-8")
     assert render_main([str(path)]) == 0
     out = capsys.readouterr().out
-    current, with3 = results.rows[2].metrics, results.rows[3].metrics
-    assert "| Measure | stages 1+2 (current) | stages 1+2+3 |" in out
-    n_u = with3.unanswerable
-    assert f"| unanswerable queries refused (95% Wilson) | 0/{n_u} [0.00," in out
-    assert f"| {n_u}/{n_u} [" in out
-    assert current.false_refusals == 0
-    assert with3.false_refusals == 0
-    assert "| model cost USD per query |" in out
-    assert "| answer-path model latency p50 / p95, s |" in out
-    assert "| refused: cited notes do not answer the question |" in out
-    assert "prompt `verify` version" in out
+    m = results.rows[2].metrics
+    assert "| Rate on the abstention set | Count and 95% Wilson interval |" in out
+    assert f"| unanswerable queries refused | {m.caught}/{m.unanswerable} [" in out
+    assert f"| answerable queries refused | 0/{m.answerable} [0.00," in out
 
 
-def test_stage_three_latency_adds_the_verifier_call_to_the_answer_path(
+def test_the_latency_of_each_answer_is_recorded_per_query(
     config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path
 ) -> None:
     settings = decided_settings(load_settings(config), NEVER_REFUSE)
     resources = make_resources(settings, notebooks, tiny_tokenizer)
-    transport = FakeTransport(
-        staged_responder(), latency=lambda p: 3.0 if p.name == "verify" else 1.0
-    )
+    transport = FakeTransport(answer_with_first_note, latency=lambda _p: 1.5)
     meter = CostMeter(settings.llm.prices, settings.llm.max_usd)
     client = CachingClient(transport, ResponseCache(tmp_path / "l.sqlite"), meter, "minimal")
-    models = Models(
-        Generator(client, load_prompt("answer"), settings.llm.model, 100),
-        Verifier(client, load_prompt("verify"), settings.llm.model, ("medium", 400)),
-    )
-    results = run_generation(
-        settings, resources, CONTEXT, models, gold_subset(make_gold(notebooks), Split.DEV)
-    )
-    s3 = results.stage3
-    assert s3 is not None
-    without, with3 = s3.answer_path_latency_without, s3.answer_path_latency_with
-    assert without is not None
-    assert with3 is not None
-    assert (without.p50, without.p95) == (1.0, 1.0)  # the answer call alone: 1.0 s
-    assert (with3.p50, with3.p95) == (4.0, 4.0)  # plus the verifier call: 1.0 + 3.0 s
-    assert all(o.api_latency_s == 1.0 for o in results.queries)
+    generator = Generator(client, load_prompt("answer"), settings.llm.model, 100)
+    gold = make_gold(notebooks)
+    first = run_generation(settings, resources, CONTEXT, generator, gold_subset(gold, Split.DEV))
+    assert all(o.api_latency_s == 1.5 for o in first.queries)  # fresh calls: their own latency
+    again = run_generation(settings, resources, CONTEXT, generator, gold_subset(gold, Split.DEV))
+    assert all(o.api_latency_s == 1.5 for o in again.queries)  # cache hits: the filling call's
 
 
-def test_stage_three_gold_hit_is_the_gold_hit_of_the_claims_it_kept(
+def test_the_gold_hit_count_matches_the_per_query_flags(
     config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path
 ) -> None:
     settings = decided_settings(load_settings(config), NEVER_REFUSE)
     resources = make_resources(settings, notebooks, tiny_tokenizer)
-    models, _ = make_models(settings, tmp_path, staged_responder())
+    generator, _ = make_generator(settings, tmp_path)
     results = run_generation(
-        settings, resources, CONTEXT, models, gold_subset(make_gold(notebooks), Split.DEV)
+        settings, resources, CONTEXT, generator, gold_subset(make_gold(notebooks), Split.DEV)
     )
-    answerable = [o for o in results.queries if not o.unanswerable]
-    hits = [o.cites_relevant_chunk for o in answerable]
+    hits = [o.cites_relevant_chunk for o in results.queries if not o.unanswerable]
     assert True in hits
     assert False in hits
-    for o in answerable:
-        assert o.stage3 is not None
-        assert o.stage3.cites_relevant_chunk == o.cites_relevant_chunk  # all claims were kept
-    s3 = results.stage3
-    assert s3 is not None
-    assert s3.answered_citing_a_relevant_chunk == sum(1 for h in hits if h)
     assert results.validity.answered_citing_a_relevant_chunk == sum(1 for h in hits if h)
+    assert results.validity.answered_answerable == len(hits)
 
 
-def test_the_stage_three_plan_skips_drafts_that_were_already_refused(
-    config: Path, notebooks: Notebooks, tiny_tokenizer: Tokenizer, tmp_path: Path
-) -> None:
-    settings = decided_settings(load_settings(config), NEVER_REFUSE)
-    resources = make_resources(settings, notebooks, tiny_tokenizer)
-    pipeline, cap = decided_pipeline(settings, resources)
-    chunks = {c.id: c for c in resources.chunks(cap, "structural")}
+RESULTS = Path(__file__).resolve().parents[2] / "results"
 
-    def respond(prompt: Prompt) -> str:
-        if prompt.name == "answer" and "nothing" in prompt.variable:
-            return json.dumps({"insufficient": True, "claims": []})
-        return staged_responder()(prompt)
 
-    models, _ = make_models(settings, tmp_path, respond)
-    asker = Asker(pipeline, chunks, Thresholds(cosine=-1.0, bm25=-1.0), models, 2)
-    queries = select_all(make_gold(notebooks), Split.DEV)
-    for q in queries:
-        asker.ask(q.text)  # fills the cache with the answers (and verifications)
-    cache = ResponseCache(tmp_path / "m.sqlite")
-    effort = settings.llm.reasoning_effort
-    offline = Generator(CacheOnly(cache, effort), load_prompt("answer"), settings.llm.model, 100)
-    never_cached = lambda _p: False  # noqa: E731 - every verifier call would still have to be made
-    base = plan_generation(asker, queries, settings, len, lambda _p: True)
-    assert models.verifier is not None
-    plan = plan_stage3(base, asker, offline, models.verifier, (queries, chunks), settings,
-                       (len, never_cached))  # fmt: skip
-    refused = sum(1 for q in queries if q.type is QueryType.UNANSWERABLE and "nothing" in q.text)
-    assert refused > 0
-    assert plan.stage3 is not None
-    assert plan.stage3.calls == len(queries) - refused
+def test_the_committed_stage_three_record_still_loads_and_says_what_the_addendum_says() -> None:
+    """Stage 3 was removed from the code (proposal 007); its dev result stays as a record."""
+    record = GenerationResults.model_validate_json(
+        (RESULTS / "generation_dev_stage3.json").read_text(encoding="utf-8")
+    )
+    original = GenerationResults.model_validate_json(
+        (RESULTS / "generation_dev_prompt2.json").read_text(encoding="utf-8")
+    )
+    rows = {r.name: r.metrics for r in record.rows}
+    for name in ("stages 1+2 (current pipeline)", "stages 1+2+3"):
+        m = rows[name]
+        assert (m.false_refusals, m.answerable, m.caught, m.unanswerable) == (0, 54, 3, 6), name
+    # the current-pipeline columns of the two files are the same drafts
+    assert (
+        rows["stages 1+2 (current pipeline)"]
+        == {r.name: r.metrics for r in original.rows}["two-stage (ships)"]
+    )
+    assert record.meta.prompt_versions["answer"] == original.meta.prompt_versions["answer"]

@@ -40,7 +40,6 @@ class ProblemKind(StrEnum):
     NO_CLAIMS = "no_claims"
     CLAIMS_WHEN_INSUFFICIENT = "claims_when_insufficient"
     UNPARSABLE = "unparsable"
-    BAD_VERDICT = "bad_verdict"
 
 
 class Problem(BaseModel):

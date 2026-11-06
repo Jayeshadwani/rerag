@@ -65,6 +65,31 @@ are still answered, with citations that pass the structural check. Whether those
 the cited notes is not measured yet (M7). Gold-hit says that 9 of the 54 answered answerable queries cite
 no gold-labelled cell, which does not by itself make an answer wrong. The test split has not been run.
 
+## Post-answer verification (stage 3): tested on dev, not adopted
+
+Proposal 007 added a third abstention stage: for each answered query, a second `gpt-5-mini` call at
+reasoning effort `medium` received the question, the claims and the full text of the cited chunks, and
+judged whether the cited notes directly answer the question and whether each claim is supported. It was
+adopted only if answerable false refusals stayed at most 2/54 and unanswerable refusals strictly improved
+on 3/6. On dev (results in `results/generation_dev_stage3.json`; the code that produced them is at commit
+`4e877d8`):
+
+| Measure | without stage 3 | with stage 3 |
+|---|---|---|
+| answerable queries refused | 0/54 | 0/54 |
+| unanswerable queries refused | 3/6 | 3/6 |
+| answered answerable queries citing a gold chunk | 45/54 | 44/54 |
+| claims shown | 169 | 161 |
+| model cost per query (USD) | 0.00087 | 0.00262 |
+| median / 95th percentile model latency of an answered query (s) | 2.44 / 4.33 | 9.07 / 22.63 |
+
+The rule was not met, so stage 3 was **not adopted and its code was removed** (it stays in git history).
+The verifier judged "the cited notes answer the question" to be true for all 57 answered queries,
+including the three unanswerable queries that are still answered; it dropped 8 of 169 claims and never
+refused an answer. Cost per query was about 3 times higher and latency about 4 times (median). This is a
+measurement on 6 unanswerable queries with the same model as the verifier; it was not run on the test
+split. Abstention therefore still rests on the model's own `insufficient` flag.
+
 ## Known limitations
 
 - At chunk cap 512, 294 of 2310 chunks (12.7%) are longer than the input limit of BAAI/bge-base-en-v1.5 and are cut, so dense retrieval does not see their tails. The chunker is unchanged. (Source: `results/retrieval_ablation_dev.json`, the `notes` field and the truncation table; rendered by `scripts/render_results.py`.)

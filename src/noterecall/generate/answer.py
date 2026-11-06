@@ -29,9 +29,6 @@ class Outcome(StrEnum):
     REFUSED_STAGE1 = "refused_stage1"
     REFUSED_MODEL = "refused_model"
     REFUSED_INVALID = "refused_invalid"
-    REFUSED_VERIFIER = "refused_verifier"
-    REFUSED_UNSUPPORTED = "refused_unsupported"
-    REFUSED_VERIFIER_INVALID = "refused_verifier_invalid"
 
 
 class CitedClaim(BaseModel):
@@ -55,22 +52,8 @@ class FirstAttempt(BaseModel):
     valid: bool
 
 
-class Verification(BaseModel):
-    """What stage 3 did to an answered response (proposal 007)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    answers_question: bool | None
-    claims_in: int
-    claims_dropped: int
-    attempts: int
-    usage: Usage
-    api_latency_s: float
-
-
 class Response(BaseModel):
-    """The result of asking a question. `usage` and `api_latency_s` are those of the answer calls;
-    stage 3, if it ran, has its own in `verification`."""
+    """The result of asking a question: `usage` and `api_latency_s` are those of the model calls."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -80,7 +63,6 @@ class Response(BaseModel):
     first_attempt: FirstAttempt | None = None
     usage: Usage = Usage()
     api_latency_s: float = 0.0
-    verification: Verification | None = None
 
 
 def short_ids(chunks: Sequence[Chunk]) -> dict[str, Chunk]:
