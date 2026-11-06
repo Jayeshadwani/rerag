@@ -212,3 +212,8 @@ proposal 006. ADR-011 is unchanged by this proposal, because stage 3 was not ado
 that the owner is writing remains a report-only set for the current pipeline (stages 1 and 2); the tooling
 for it stays. The per-call reasoning effort in the LLM layer and the API-latency record also stay (they
 are general features of the layer, tested without stage 3).
+
+Update (owner's decision, after Addendum 1): the abstention set described in "The abstention set" above will
+**not be written**, so it was never run through either pipeline. The tooling for it stays, unused on real
+data. Proposal 006, addendum 3 records the same.
+

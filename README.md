@@ -63,7 +63,18 @@ The improvement is one unanswerable query out of six, so it is a pre-registered 
 evidence; the revision also gives shorter answers (fewer claims). The other 3 unanswerable dev queries
 are still answered, with citations that pass the structural check. Whether those answers are supported by
 the cited notes is not measured yet (M7). Gold-hit says that 9 of the 54 answered answerable queries cite
-no gold-labelled cell, which does not by itself make an answer wrong. The test split has not been run.
+no gold-labelled cell, which does not by itself make an answer wrong. Test split (run once, `results/generation_test_M6.json`): answerable queries refused 0/22; unanswerable
+queries refused 2/3 in both views (as labelled and adjudicated); first-attempt citation validity 25/25.
+The one unanswerable query that was answered (q033) was adjudicated by the owner as a genuine abstention
+miss, not a label error (proposal 006, addendum 3): its answer covers only one side of a comparison.
+Abstention numbers are reported two ways, as labelled and adjudicated (owner-confirmed label errors, listed
+by id in `config/default.toml`, left out); the gold file itself is unchanged. With 3 unanswerable test
+queries the counts are coarse.
+
+**The report-only abstention set was not built.** Proposal 007 planned a separate set of about 40 queries
+for reporting abstention on more examples. The owner decided not to write it, so there is no result for it.
+Its tooling (`label --id-prefix`, `gold validate --kind abstention`, `eval --suite generation --set
+abstention`) exists and is tested but has never been run on real data.
 
 ## Post-answer verification (stage 3): tested on dev, not adopted
 

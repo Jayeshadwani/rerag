@@ -158,3 +158,32 @@ has the counts only; the cached answer has the text) is an example of an **unsup
 in the M7 judge's calibration material: it states a comparative speed claim against another library that
 the cited chunk does not state (the chunk says only that performance is comparable). The claim passes the
 structural check of ADR-011 because it cites a chunk that exists. Ids only are recorded here, not text.
+
+## Addendum 3: result of the M6 test run and the owner's adjudication of q033
+
+The M6 test split was run once (`results/generation_test_M6.json`, ledger entry `M6`, commit `76519652e962`,
+adopted answer prompt `ee9346d6e271`, stage-1 thresholds from the dev calibration), as pre-registered in
+addendum 2. Counts: answerable queries refused 0/22; unanswerable queries refused 2/3; first-attempt
+citation validity 25/25; retries 0/25.
+
+One unanswerable test query was answered, **q033**. As pre-registered, its question, claims and cited chunks
+were shown to the owner, who adjudicated:
+
+- **q033 is not a label error. It is a genuine abstention miss.** The answer covers only one of the two things
+  the question asks to compare and presents it as a comparison; the cited chunks cover only that one side.
+- The owner's decision is recorded here and `[generation] label_errors` is **not** changed (it stays
+  q024, q051, q081, all dev ids).
+- **Both views therefore stay at 2/3** on the test split: as labelled 2/3, adjudicated 2/3 (no test id was
+  left out). Answerable queries refused: 0/22 in both views.
+
+**For M7 (faithfulness evaluation), second example.** q033 (test split) is a **"cited but does not answer
+the question"** case: the claims of the answer are accurate statements about one side of the comparison and
+cite chunks that exist and say so, so both the structural check of ADR-011 and a per-claim "is this supported
+by the cited chunk" judgment would pass, while the answer does not answer the question that was asked. The M7
+judge should be calibrated on this kind of case as well as on q081's unsupported claim (addendum 2). Ids
+only are recorded here, not text.
+
+**Not done, by the owner's decision:** the report-only abstention set of proposal 007 (about 40 queries
+written by the owner) will not be written. Its tooling (`label --id-prefix`, `gold validate --kind
+abstention`, `eval --suite generation --set abstention`, Wilson intervals) is built and tested and stays in
+the code, but it has never been run on a real set, and no result for it exists.
