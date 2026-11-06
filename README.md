@@ -63,7 +63,9 @@ The improvement is one unanswerable query out of six, so it is a pre-registered 
 evidence; the revision also gives shorter answers (fewer claims). The other 3 unanswerable dev queries
 are still answered, with citations that pass the structural check. Whether those answers are supported by
 the cited notes is not measured yet (M7). Gold-hit says that 9 of the 54 answered answerable queries cite
-no gold-labelled cell, which does not by itself make an answer wrong. Test split (run once, `results/generation_test_M6.json`): answerable queries refused 0/22; unanswerable
+no gold-labelled cell, which does not by itself make an answer wrong.
+
+Test split (run once, `results/generation_test_M6.json`): answerable queries refused 0/22; unanswerable
 queries refused 2/3 in both views (as labelled and adjudicated); first-attempt citation validity 25/25.
 The one unanswerable query that was answered (q033) was adjudicated by the owner as a genuine abstention
 miss, not a label error (proposal 006, addendum 3): its answer covers only one side of a comparison.
