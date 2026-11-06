@@ -124,3 +124,37 @@ split is not touched by this addendum.
   $0.0522 against $0.0547.
 
 No second revision was tried. The test split has not been run.
+
+## Addendum 2: owner adjudication of three dev queries, and two-view reporting (written before the test run)
+
+**Owner adjudication, not a model change.** The owner read q024, q051 and q081 against the notes the model
+cited. All three are **labelling errors in the gold set**: the notes answer q024 and q051, and partly answer
+q081. They were labelled unanswerable and should not have been. The gold file was not touched: it is the
+owner's, it is frozen, and its split hash is unchanged. Nothing in the pipeline, the prompt or the thresholds
+changes because of this, and there are no further abstention changes.
+
+**Two views, from now on.** Every abstention number is reported two ways:
+
+- **as labelled:** the gold set exactly as frozen;
+- **adjudicated:** the owner-confirmed label errors, listed by id, are left out of the unanswerable queries
+  (out of the count refused and out of the count of unanswerable queries). They are not moved to the
+  answerable queries, because they carry no gold cell labels. Answerable counts are the same in both views.
+
+The list lives in config (`[generation] label_errors`) and in this addendum. For the dev split it is
+q024, q051, q081, so the adjudicated dev view of the adopted prompt has 3 unanswerable queries (q037, q083,
+q084), all three refused, and 0/54 answerable queries refused. The as-labelled view stays 3/6 and 0/54.
+Earlier decisions that were made on the as-labelled numbers (proposal 006 addendum 1, proposal 007) are not
+revisited.
+
+**Pre-registered for the M6 test run, before it is run.** If any unanswerable test-split query is answered,
+the question, the claims and the cited chunks are shown to the owner in chat, the owner adjudicates it, and
+both numbers (as labelled, adjudicated) are reported with the owner's decision recorded in this proposal.
+Until the owner has decided, the adjudicated test view equals the as-labelled one (no test id is in the list).
+The test split is run once, with the adopted answer prompt `ee9346d6e271` and the stage-1 thresholds of the
+dev calibration.
+
+**For M7 (faithfulness evaluation).** q081, claim 1 of the adopted-prompt answer (`results/generation_dev_prompt2.json`
+has the counts only; the cached answer has the text) is an example of an **unsupported claim** to include
+in the M7 judge's calibration material: it states a comparative speed claim against another library that
+the cited chunk does not state (the chunk says only that performance is comparable). The claim passes the
+structural check of ADR-011 because it cites a chunk that exists. Ids only are recorded here, not text.
