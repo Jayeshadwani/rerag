@@ -73,6 +73,7 @@ raw_dir = "{raw}"
 db_path = "{tmp_path / "state" / "notes.sqlite"}"
 results_dir = "{tmp_path / "results"}"
 gold_path = "{tmp_path / "state" / "gold.json"}"
+abstention_path = "{tmp_path / "state" / "abstention.json"}"
 
 [logging]
 level = "INFO"
@@ -101,6 +102,11 @@ cache_path = "{tmp_path / "state" / "llm_cache.sqlite"}"
 input = 1.0
 cached_input = 0.1
 output = 4.0
+
+[generation]
+max_chunks = 2
+max_output_tokens = 300
+max_false_refusal_pct = 5
 
 [retrieval]
 candidate_depth = 5
@@ -157,3 +163,21 @@ def fake_models(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(cli, "load_embedder", embedder)
     monkeypatch.setattr(cli, "load_cross_encoder", lambda _spec: OverlapReranker())
     return loaded
+
+
+PRIVATE_GOLD_FILES = [
+    Path(__file__).resolve().parents[1] / "data" / "rerag-data" / "gold" / name
+    for name in ("gold.json", "abstention.json")
+]
+
+
+def _private_state() -> list[tuple[bool, int | None]]:
+    return [(p.exists(), p.stat().st_mtime_ns if p.exists() else None) for p in PRIVATE_GOLD_FILES]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _private_gold_files_are_never_touched() -> Iterator[None]:
+    """The owner's private gold files must not be created or changed by any test."""
+    before = _private_state()
+    yield
+    assert _private_state() == before, "a test wrote to a real private gold file"

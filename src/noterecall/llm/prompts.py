@@ -9,12 +9,14 @@ so editing a prompt changes the cache key of every call that used it.
 """
 
 import hashlib
+import re
 from pathlib import Path
 
 from noterecall.llm.client import LLMError, Prompt
 
 PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 SECTIONS = ("instructions", "shared", "variable")
+_PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
 
 
 class PromptFileError(LLMError):
@@ -29,8 +31,15 @@ class PromptTemplate:
         self.version = version
         self._parts = parts
 
-    def render(self, model: str, max_output_tokens: int, **values: str) -> Prompt:
-        """Fill the placeholders and return a ready `Prompt`."""
+    def render(
+        self,
+        model: str,
+        max_output_tokens: int,
+        *,
+        reasoning_effort: str | None = None,
+        **values: str,
+    ) -> Prompt:
+        """Fill the placeholders and return a ready `Prompt` (with its own effort, if given)."""
         filled = {key: self._fill(text, values) for key, text in self._parts.items()}
         return Prompt(
             name=self.name,
@@ -40,13 +49,14 @@ class PromptTemplate:
             shared=filled.get("shared", ""),
             variable=filled.get("variable", ""),
             max_output_tokens=max_output_tokens,
+            reasoning_effort=reasoning_effort,
         )
 
     @staticmethod
     def _fill(text: str, values: dict[str, str]) -> str:
-        for key, value in values.items():
-            text = text.replace("{{" + key + "}}", value)
-        return text
+        """Replace every known placeholder in one pass, so a value that itself contains a
+        placeholder (a note quoting `{{question}}`) is never substituted a second time."""
+        return _PLACEHOLDER.sub(lambda m: values.get(m.group(1), m.group(0)), text)
 
 
 def load_prompt(name: str, directory: Path = PROMPT_DIR) -> PromptTemplate:

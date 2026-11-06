@@ -4,11 +4,13 @@ Every number is read from the results file; nothing is typed by hand. Used by
 `scripts/render_results.py`.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from noterecall.eval.ablation import Comparison, ConfigResult
+from noterecall.eval.run_generation import GenerationResults, Row, adjudicated_rows
 from noterecall.eval.run_header import HeaderDevResults
 from noterecall.eval.run_retrieval import DevResults, TestResults
+from noterecall.eval.stats import wilson_interval
 
 
 def _cell(text: str) -> str:
@@ -218,3 +220,183 @@ def render_header(result: HeaderDevResults) -> str:
         )
         + "\n"
     )
+
+
+def _count(outcomes: Sequence[str], name: str) -> int:
+    return sum(1 for o in outcomes if o == name)
+
+
+def _with_interval(successes: int, n: int) -> str:
+    """`k/n` and its 95% Wilson interval (n = 0 has no interval)."""
+    if n == 0:
+        return f"{successes}/{n}"
+    low, high = wilson_interval(successes, n)
+    return f"{successes}/{n} [{low:.2f}, {high:.2f}]"
+
+
+def abstention_intervals(result: GenerationResults) -> str:
+    """Raw counts with 95% Wilson intervals for the current pipeline on the abstention set
+    (proposal 007: no decision is made on this set)."""
+    m = next(r for r in result.rows if r.name == "stages 1+2 (current pipeline)").metrics
+    return _grid(
+        ("Rate on the abstention set", "Count and 95% Wilson interval"),
+        [
+            ["answerable queries refused", _with_interval(m.false_refusals, m.answerable)],
+            ["unanswerable queries refused", _with_interval(m.caught, m.unanswerable)],
+        ],
+    )
+
+
+def _rows_table(rows: Sequence[Row]) -> str:
+    return _grid(
+        (
+            "Row",
+            "False refusals (answerable)",
+            "Unanswerable refused",
+            "Precision",
+            "F1 (reference)",
+        ),
+        [
+            [
+                r.name,
+                f"{r.metrics.false_refusals}/{r.metrics.answerable}",
+                f"{r.metrics.caught}/{r.metrics.unanswerable}",
+                "n/a" if r.metrics.precision is None else _f(r.metrics.precision),
+                "n/a" if r.metrics.f1 is None else _f(r.metrics.f1),
+            ]
+            for r in rows
+        ],
+    )
+
+
+def _adjudicated_view(result: GenerationResults, label_errors: Sequence[str]) -> str:
+    """The same rows with the owner-confirmed label errors left out (proposal 006, addendum 2)."""
+    present = sorted(
+        o.query_id for o in result.queries if o.unanswerable and o.query_id in set(label_errors)
+    )
+    if not present:
+        return (
+            "Adjudicated: no owner-confirmed label error is among these queries, so the "
+            "adjudicated view equals the as-labelled one."
+        )
+    rows = adjudicated_rows(result.queries, result.cosine_only_threshold, present)
+    head = (
+        "Adjudicated (owner-confirmed label errors left out of the unanswerable queries: "
+        f"{', '.join(present)}):"
+    )
+    return head + "\n\n" + _rows_table(rows)
+
+
+def render_generation(result: GenerationResults, label_errors: Sequence[str] = ()) -> str:
+    """The M6 report: outcomes per kind of query, citation validity, the three rows and the cost."""
+    split = result.query_set
+    outcome_rows = []
+    for label, flag in (("answerable", False), ("unanswerable", True)):
+        outs = [q.outcome.value for q in result.queries if q.unanswerable is flag]
+        refused = len(outs) - _count(outs, "answered")
+        outcome_rows.append(
+            [
+                label,
+                str(len(outs)),
+                str(_count(outs, "answered")),
+                f"{refused}/{len(outs)}",
+                str(_count(outs, "refused_stage1")),
+                str(_count(outs, "refused_model")),
+                str(_count(outs, "refused_invalid")),
+            ]
+        )
+    v = result.validity
+    validity = _grid(
+        ("Measure", "Count"),
+        [
+            ["queries sent to the model", str(v.queries_to_model)],
+            ["first attempt valid", f"{v.first_attempt_valid}/{v.queries_to_model}"],
+            ["first attempt unparsable", str(v.first_attempt_unparsable)],
+            ["retried", f"{v.retried}/{v.queries_to_model}"],
+            [
+                "uncited claims, first attempt",
+                f"{v.uncited_claims_first_attempt}/{v.claims_first_attempt}",
+            ],
+            ["unknown citation ids, first attempt", str(v.unknown_citations_first_attempt)],
+            [
+                "answered answerable queries citing a gold-relevant chunk",
+                f"{v.answered_citing_a_relevant_chunk}/{v.answered_answerable}",
+            ],
+        ],
+    )
+    rows = _rows_table(result.rows)
+    adjudicated = _adjudicated_view(result, label_errors)
+    u = result.total_usage
+    cost = (
+        f"Tokens: input {u.input_tokens} (cached {u.cached_tokens}), output {u.output_tokens} "
+        f"(reasoning {u.reasoning_tokens}). Total cost ${result.total_cost_usd:.4f}."
+    )
+    meta = result.meta
+    footer = (
+        f"{meta.queries} {split} queries, prompt `answer` version "
+        f"{result.meta.prompt_versions['answer']}, commit `{meta.git.sha[:12]}`"
+        f"{' (dirty tree)' if meta.git.dirty else ''}. Stage-1 thresholds: cosine "
+        f"{result.thresholds.cosine:.4f}, BM25 {result.thresholds.bm25:.4f}."
+    )
+    outcomes = _grid(
+        ("Queries", "n", "Answered", "Refused", "by stage 1", "by the model", "invalid twice"),
+        outcome_rows,
+    )
+    parts = [
+        outcomes,
+        validity,
+        "As labelled (the gold set exactly as frozen):",
+        rows,
+        adjudicated,
+        cost,
+    ]
+    if result.query_set == "abstention":
+        parts.append(abstention_intervals(result))
+    return "\n\n".join([*parts, footer]) + "\n"
+
+
+def _split_counts(result: GenerationResults) -> tuple[str, str]:
+    answerable = [q for q in result.queries if not q.unanswerable]
+    unanswerable = [q for q in result.queries if q.unanswerable]
+    refused_a = sum(1 for q in answerable if q.outcome.value != "answered")
+    refused_u = sum(1 for q in unanswerable if q.outcome.value != "answered")
+    return f"{refused_a}/{len(answerable)}", f"{refused_u}/{len(unanswerable)}"
+
+
+def render_generation_pair(first: GenerationResults, second: GenerationResults) -> str:
+    """Two runs of the same split side by side (for example two answer prompts)."""
+    columns = [f"prompt {r.meta.prompt_versions['answer']}" for r in (first, second)]
+
+    def valid(r: GenerationResults) -> str:
+        return f"{r.validity.first_attempt_valid}/{r.validity.queries_to_model}"
+
+    def retried(r: GenerationResults) -> str:
+        return f"{r.validity.retried}/{r.validity.queries_to_model}"
+
+    def uncited(r: GenerationResults) -> str:
+        return f"{r.validity.uncited_claims_first_attempt}/{r.validity.claims_first_attempt}"
+
+    def gold_hit(r: GenerationResults) -> str:
+        return f"{r.validity.answered_citing_a_relevant_chunk}/{r.validity.answered_answerable}"
+
+    def tokens(r: GenerationResults) -> str:
+        return f"{r.total_usage.input_tokens} / {r.total_usage.output_tokens}"
+
+    measures: list[tuple[str, Callable[[GenerationResults], str]]] = [
+        ("answerable queries refused", lambda r: _split_counts(r)[0]),
+        ("unanswerable queries refused", lambda r: _split_counts(r)[1]),
+        ("first attempt valid", valid),
+        ("retried", retried),
+        ("uncited claims, first attempt", uncited),
+        ("gold-hit (answered answerable citing a gold chunk)", gold_hit),
+        ("claims in all answers, first attempt", lambda r: str(r.validity.claims_first_attempt)),
+        ("input / output tokens", tokens),
+        ("cost USD", lambda r: f"{r.total_cost_usd:.4f}"),
+    ]
+    rows = [[label, *(fn(r) for r in (first, second))] for label, fn in measures]
+    meta = first.meta
+    footer = (
+        f"{meta.queries} {first.query_set} queries, same retrieval and thresholds; commits "
+        f"`{first.meta.git.sha[:12]}` and `{second.meta.git.sha[:12]}`."
+    )
+    return _grid(("Measure", *columns), rows) + "\n\n" + footer + "\n"

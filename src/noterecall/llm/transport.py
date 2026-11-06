@@ -52,12 +52,18 @@ class CachingClient:
         self._effort = effort
 
     def complete_json[S: BaseModel](self, prompt: Prompt, schema: type[S]) -> LLMResult[S]:
-        key = cache_key(prompt, self._effort)
+        key = cache_key(prompt, prompt.reasoning_effort or self._effort)
         stored = self._cache.get(key)
         if stored is not None:
             parsed = self._parse(stored.text, schema)
             self._log(prompt, stored.usage, stored.latency_s, from_cache=True, attempts=0)
-            return LLMResult(parsed=parsed, usage=stored.usage, latency_s=0.0, from_cache=True)
+            return LLMResult(
+                parsed=parsed,
+                usage=stored.usage,
+                latency_s=0.0,
+                from_cache=True,
+                api_latency_s=stored.latency_s,
+            )
         self._meter.check()
         start = time.perf_counter()
         raw = self._transport.complete_text(prompt, schema.__name__, schema.model_json_schema())
@@ -70,6 +76,7 @@ class CachingClient:
             usage=raw.usage,
             latency_s=time.perf_counter() - start,
             from_cache=False,
+            api_latency_s=raw.latency_s,
         )
 
     @staticmethod

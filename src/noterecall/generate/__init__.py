@@ -1,5 +1,2 @@
-"""Package for later milestones.
-
-Will implement ADR-011 (code-enforced grounding) and ADR-014 (human-owned concepts).
-Empty until then.
-"""
+"""Grounded answers (ADR-011 as amended by proposals 003 and 006): citation validation, two-stage
+abstention and `noterecall ask`. The concept and card features arrive in M7 (ADR-014)."""

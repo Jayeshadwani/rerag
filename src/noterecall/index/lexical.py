@@ -49,6 +49,10 @@ class LexicalIndex:
         bm25.index([tokenize(indexed_text(c, texts)) for c in chunks], show_progress=False)
         return cls([c.id for c in chunks], bm25, tokenize)
 
+    def query_tokens(self, query: str) -> int:
+        """How many tokens the index's tokenizer makes of the query (duplicates counted)."""
+        return len(self._tokenize(query))
+
     def search(self, query: str, k: int) -> list[RetrievalHit]:
         """Top-k chunks with a positive BM25 score, best first (ties by chunk order)."""
         if k < 1:

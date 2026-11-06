@@ -455,3 +455,50 @@ def test_an_unusable_answer_is_still_counted_as_spend(tmp_path: Path) -> None:
         client.complete_json(prompt(), Answer)
     assert meter.spent_usd > 0  # the call was paid for
     assert cache.spend() == []  # but nothing unusable is stored as an answer
+
+
+def test_a_value_that_looks_like_a_placeholder_is_not_substituted_again(tmp_path: Path) -> None:
+    (tmp_path / "z.md").write_text(
+        "## instructions\ni\n\n## variable\n{{notes}} | {{question}} | {{unknown}}\n",
+        encoding="utf-8",
+    )
+    rendered = load_prompt("z", tmp_path).render("m", 5, notes="see {{question}}", question="Q")
+    assert rendered.variable == "see {{question}} | Q | {{unknown}}"
+
+
+def test_a_prompt_effort_overrides_the_default_in_the_request_and_the_cache_key(
+    tmp_path: Path,
+) -> None:
+    responses = FakeResponses(FakeResponse(), FakeResponse())
+    t, _ = transport(responses)
+    t.complete_text(prompt(), "Answer", {"type": "object"})
+    t.complete_text(prompt(reasoning_effort="medium"), "Answer", {"type": "object"})
+    assert [r["reasoning"] for r in responses.requests] == [
+        {"effort": "minimal"},
+        {"effort": "medium"},
+    ]
+    # the cache key follows the effort the call is made with, and a prompt that names the
+    # default effort shares the key of one that does not (so earlier answers stay reusable)
+    client, fake_transport, _cache, _meter = make_client(tmp_path)
+    client.complete_json(prompt(), Answer)
+    again = client.complete_json(prompt(reasoning_effort="minimal"), Answer)
+    assert again.from_cache
+    assert len(fake_transport.prompts) == 1
+    other = client.complete_json(prompt(reasoning_effort="medium"), Answer)
+    assert not other.from_cache
+    assert len(fake_transport.prompts) == 2
+
+
+def test_a_cache_hit_reports_the_latency_of_the_call_that_filled_it(tmp_path: Path) -> None:
+    transport = FakeTransport(echo, latency=lambda _p: 1.25)
+    cache = ResponseCache(tmp_path / "c.sqlite")
+    client = CachingClient(transport, cache, CostMeter({"m": PRICE}, 1.0), "minimal")
+    fresh = client.complete_json(prompt(), Answer)
+    assert fresh.api_latency_s == 1.25
+    key = cache_key(prompt(), "minimal")
+    stored = cache.get(key)
+    assert stored is not None
+    hit = client.complete_json(prompt(), Answer)
+    assert hit.from_cache
+    assert hit.latency_s == 0.0
+    assert hit.api_latency_s == stored.latency_s == fresh.api_latency_s

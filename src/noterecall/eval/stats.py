@@ -6,6 +6,7 @@ is above 0, or if X is free (no latency or cost) and the interval includes 0 wit
 mean. Everything is seeded, so a result file can be reproduced exactly.
 """
 
+import math
 from collections.abc import Mapping, Sequence
 from typing import Literal
 
@@ -173,3 +174,19 @@ def validate_bootstrap(
         seed=seed,
         simulations=tuple(simulate_bootstrap(spec, seed) for spec in specs),
     )
+
+
+def wilson_interval(successes: int, n: int, z: float = 1.959964) -> tuple[float, float]:
+    """The Wilson score interval (default 95%) for `successes` out of `n` (n > 0).
+
+    centre = (p + z^2 / 2n) / (1 + z^2 / n);
+    half-width = z * sqrt(p(1-p)/n + z^2 / 4n^2) / (1 + z^2 / n).
+    It stays inside [0, 1] and is not degenerate at 0 or n, which is why it is used for the small
+    counts of the abstention reports."""
+    if n <= 0 or not 0 <= successes <= n:
+        raise EvalStatsError(f"need 0 <= successes <= n and n > 0, got {successes}/{n}")
+    p = successes / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return max(0.0, centre - half), min(1.0, centre + half)

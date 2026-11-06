@@ -164,7 +164,7 @@ class OpenAITransport:
             instructions=prompt.instructions,
             input=(prompt.shared + "\n\n" + prompt.variable) if prompt.shared else prompt.variable,
             max_output_tokens=prompt.max_output_tokens,
-            reasoning={"effort": self._effort},
+            reasoning={"effort": prompt.reasoning_effort or self._effort},
             text={
                 "format": {
                     "type": "json_schema",

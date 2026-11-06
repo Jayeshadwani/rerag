@@ -38,6 +38,7 @@ class PathsConfig(BaseModel):
     db_path: Path
     results_dir: Path
     gold_path: Path
+    abstention_path: Path = Path("data/rerag-data/gold/abstention.json")  # report-only set
 
 
 class LoggingConfig(BaseModel):
@@ -97,6 +98,30 @@ class RetrievalConfig(BaseModel):
     rrf_challengers: tuple[Annotated[int, Field(ge=1)], ...]
     latency_budget_ms: float = Field(gt=0)
     decided: DecidedConfig | None = None
+
+
+class DecidedThresholds(BaseModel):
+    """Data-decided M6 values (proposal 006): written only after the calibration results file."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    cosine: float
+    bm25: float
+
+
+class GenerationConfig(BaseModel):
+    """Grounded Q&A parameters (ADR-011, proposal 006). All but `decided` are pre-registered."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_chunks: int = Field(ge=1)
+    max_output_tokens: int = Field(ge=1)
+    max_false_refusal_pct: int = Field(ge=0, le=100)
+    decided: DecidedThresholds | None = None
+    cosine_only: float | None = None  # tau_cos of the "cosine only" reference row
+    # Owner-confirmed gold label errors (query ids), left out of the "adjudicated" view of the
+    # abstention numbers (proposal 006, addendum 2). The gold file itself is never edited.
+    label_errors: tuple[str, ...] = ()
 
 
 class EmbeddingsConfig(BaseModel):
@@ -164,6 +189,7 @@ class Settings(BaseSettings):
     chunking: ChunkingConfig
     llm: LlmConfig
     retrieval: RetrievalConfig
+    generation: GenerationConfig
     embeddings: EmbeddingsConfig
     rerank: RerankConfig
 

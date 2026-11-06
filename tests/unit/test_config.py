@@ -1,10 +1,13 @@
 """Config loading: TOML defaults, env override, strict validation, typed errors."""
 
+import json
 from pathlib import Path
 
 import pytest
 
 from noterecall.config import DEFAULT_CONFIG_PATH, ConfigError, load_settings
+
+ROOT = DEFAULT_CONFIG_PATH.parents[1]
 
 VALID_TOML = """
 [paths]
@@ -40,6 +43,11 @@ cache_path = "llm_cache.sqlite"
 input = 1.0
 cached_input = 0.1
 output = 4.0
+
+[generation]
+max_chunks = 2
+max_output_tokens = 300
+max_false_refusal_pct = 5
 
 [retrieval]
 candidate_depth = 5
@@ -249,6 +257,21 @@ def test_llm_section_loads_and_every_model_needs_a_price(tmp_path: Path) -> None
 
 def test_default_llm_config_matches_the_owner_decisions() -> None:
     llm = load_settings(DEFAULT_CONFIG_PATH).llm
-    assert (llm.model, llm.max_usd) == ("gpt-5-mini", 10.0)
+    assert (llm.model, llm.max_usd) == ("gpt-5-mini", 2.0)  # M6 cap, owner decision
     price = llm.prices["gpt-5-mini"]
     assert (price.input, price.cached_input, price.output) == (0.25, 0.025, 2.0)
+
+
+def test_default_generation_config_is_pre_registered() -> None:
+    generation = load_settings(DEFAULT_CONFIG_PATH).generation
+    assert (generation.max_chunks, generation.max_false_refusal_pct) == (6, 5)  # ADR-011, 006
+    assert generation.max_output_tokens == 1500
+    # the thresholds are data-decided: they must be exactly what the committed dev calibration chose
+    results = json.loads((ROOT / "results" / "abstention_calibration_dev.json").read_text())
+    chosen = results["calibration"]["cosine_bm25"]["thresholds"]
+    assert generation.decided is not None
+    assert (generation.decided.cosine, generation.decided.bm25) == (
+        chosen["cosine"],
+        chosen["bm25"],
+    )
+    assert generation.cosine_only == results["calibration"]["cosine_only"]["thresholds"]["cosine"]

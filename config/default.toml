@@ -7,6 +7,8 @@ db_path = "data/noterecall.sqlite"
 results_dir = "results"
 # The gold set is private (ADR-009): it lives in the data repo, and the owner writes it.
 gold_path = "data/rerag-data/gold/gold.json"
+# A separate, report-only set for abstention (proposal 007). Never frozen, no dev/test split.
+abstention_path = "data/rerag-data/gold/abstention.json"
 
 [logging]
 level = "INFO"
@@ -67,8 +69,8 @@ reasoning_effort = "minimal"
 timeout_s = 120.0
 max_retries = 3
 concurrency = 4
-# Hard stop: no call is made once the money actually spent reaches this.
-max_usd = 10.0
+# Hard stop: no call is made once the money actually spent reaches this (M6: $2, owner decision).
+max_usd = 2.0
 cache_path = "data/llm_cache.sqlite"
 
 # USD per 1M tokens, supplied by the owner.
@@ -94,3 +96,24 @@ rerank = false
 # (proposal 005).
 [retrieval.decided.variant]
 header = true
+
+# Grounded Q&A (ADR-011 as amended by proposals 003 and 006). Pre-registered, not tuned: at most 6
+# chunks in context (ADR-011); a false-refusal bound of 5% on answerable queries for the stage-1
+# calibration (proposal 006); an output cap that includes reasoning tokens.
+[generation]
+max_chunks = 6
+max_output_tokens = 1500
+max_false_refusal_pct = 5
+# tau_cos of the "cosine only" reference row (same calibration, BM25 axis always true).
+# Owner adjudication (proposal 006, addendum 2): gold queries that were labelled unanswerable by
+# mistake. They are left out of the "adjudicated" view; the gold file is unchanged.
+label_errors = ["q024", "q051", "q081"]
+cosine_only = -0.4020613431930542
+
+# Data-decided by the M6 dev calibration (results/abstention_calibration_dev.json), by the rule
+# pre-registered in proposal 006. The rule selected thresholds that refuse nothing: within the 5%
+# false-refusal bound (at most 2 of 54 answerable queries) no pair catches any of the 6 unanswerable
+# dev queries, so stage 1 is inactive and abstention rests on the model's `insufficient` flag.
+[generation.decided]
+cosine = -0.4020613431930542
+bm25 = -0.45198893547058105

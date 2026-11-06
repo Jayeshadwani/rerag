@@ -2,7 +2,7 @@
 
 Renders `corpus_stats.json`, `chunk_stats.json`, `evidence_rule_eval.json`,
 `bootstrap_validation.json`,
-the M4 retrieval results and the M5 header row; later milestones add their files.
+the M4 results, the M5 header row and the M6 generation results; later milestones add their files.
 Every number printed is read from the file (or a ratio of two numbers in it); none is typed
 by hand. Usage: `python scripts/render_results.py results/corpus_stats.json`.
 """
@@ -10,17 +10,26 @@ by hand. Usage: `python scripts/render_results.py results/corpus_stats.json`.
 import argparse
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
 from noterecall.chunking.report import ChunkStats
+from noterecall.config import load_settings
+from noterecall.eval.run_generation import GenerationResults
 from noterecall.eval.run_header import HeaderDevResults
 from noterecall.eval.run_retrieval import DevResults, TestResults
 from noterecall.eval.stats import BootstrapValidation
 from noterecall.ingest.stats import CorpusStats, Distribution, GitState
-from render_retrieval import render_dev, render_header, render_test
+from render_retrieval import (
+    render_dev,
+    render_generation,
+    render_generation_pair,
+    render_header,
+    render_test,
+)
 
 
 class Interval(BaseModel):
@@ -213,13 +222,16 @@ def load_results(
     | BootstrapValidation
     | DevResults
     | HeaderDevResults
+    | GenerationResults
     | TestResults
 ):
     """Read a results file and validate it as the report type its keys identify."""
     text = path.read_text(encoding="utf-8")
     keys = json.loads(text)
     model: type[BaseModel] = CorpusStats
-    if "rows" in keys:
+    if "validity" in keys:
+        model = GenerationResults
+    elif "rows" in keys:
         model = ChunkStats
     elif "ablation" in keys:
         model = HeaderDevResults if "with_header" in keys["ablation"] else DevResults
@@ -232,30 +244,59 @@ def load_results(
     return model.model_validate_json(text)  # type: ignore[return-value]
 
 
+def _label_errors(option: str | None) -> tuple[str, ...]:
+    """The ids to leave out of the adjudicated view: the option, or the config's list."""
+    if option is None:
+        return load_settings(None).generation.label_errors
+    return tuple(i for i in option.split(",") if i and i != "none")
+
+
+def render_report(report: object, label_errors_option: str | None) -> str:
+    """Markdown for any results object this script knows."""
+    if isinstance(report, GenerationResults):
+        return render_generation(report, _label_errors(label_errors_option))
+    renderers: list[tuple[type, Callable[[Any], str]]] = [
+        (ChunkStats, render_chunk_stats),
+        (HeaderDevResults, render_header),
+        (DevResults, render_dev),
+        (TestResults, render_test),
+        (BootstrapValidation, render_bootstrap_validation),
+        (EvidenceReport, lambda r: render_evidence_eval(r.summary)),
+        (CorpusStats, render_corpus_stats),
+    ]
+    for kind, render in renderers:
+        if isinstance(report, kind):
+            return render(report)
+    raise TypeError(f"no renderer for {type(report).__name__}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point: prints Markdown to stdout; exit 1 on a missing or invalid file."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n", maxsplit=1)[0])
     parser.add_argument("path", type=Path)
+    parser.add_argument(
+        "other", type=Path, nargs="?", help="a second generation file, to render side by side"
+    )
+    parser.add_argument(
+        "--label-errors",
+        help="comma-separated gold query ids to leave out of the adjudicated abstention view "
+        "(default: [generation] label_errors of config/default.toml; 'none' for no ids)",
+    )
     args = parser.parse_args(argv)
     try:
         report = load_results(args.path)
+        other = load_results(args.other) if args.other is not None else None
     except (OSError, ValidationError, json.JSONDecodeError) as exc:
         print(f"error: cannot render {args.path}: {exc}", file=sys.stderr)
         return 1
-    if isinstance(report, ChunkStats):
-        sys.stdout.write(render_chunk_stats(report))
-    elif isinstance(report, HeaderDevResults):
-        sys.stdout.write(render_header(report))
-    elif isinstance(report, DevResults):
-        sys.stdout.write(render_dev(report))
-    elif isinstance(report, TestResults):
-        sys.stdout.write(render_test(report))
-    elif isinstance(report, BootstrapValidation):
-        sys.stdout.write(render_bootstrap_validation(report))
-    elif isinstance(report, EvidenceReport):
-        sys.stdout.write(render_evidence_eval(report.summary))
-    else:
-        sys.stdout.write(render_corpus_stats(report))
+    if other is not None:
+        if not (isinstance(report, GenerationResults) and isinstance(other, GenerationResults)):
+            print("error: two files can only be compared if both are generation results",
+                  file=sys.stderr)  # fmt: skip
+            return 1
+        sys.stdout.write(render_generation_pair(report, other))
+        return 0
+    sys.stdout.write(render_report(report, args.label_errors))
     return 0
 
 

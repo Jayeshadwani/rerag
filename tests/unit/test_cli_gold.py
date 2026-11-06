@@ -311,3 +311,72 @@ def test_commands_report_a_missing_config_file(tmp_path: Path) -> None:
         result = runner.invoke(cli.app, [*args, "--config", missing])
         assert result.exit_code == 1, args
         assert "error: config file not found" in result.stderr
+
+
+def _abstention_path(config: Path) -> Path:
+    return load_settings(config).paths.abstention_path
+
+
+def test_label_with_an_id_prefix_writes_a_separate_set_with_its_own_ids(config: Path) -> None:
+    _synced(config)
+    path = _abstention_path(config)
+    result = _label(config, "off topic question", "5", "/grep zzzzzz", "/done", "/done", "n",
+                    extra=["--gold-path", str(path), "--id-prefix", "a"])  # fmt: skip
+    assert result.exit_code == 0, result.stdout
+    assert "saved a001" in result.stdout
+    gold = load_gold(path)
+    assert [q.id for q in gold.queries] == ["a001"]
+    assert gold.queries[0].type is QueryType.UNANSWERABLE
+    assert not gold.frozen
+    assert gold.queries[0].split is None
+    assert not _gold_path(config).exists()  # the frozen gold set was not touched
+
+
+def test_validate_kind_abstention_checks_ids_text_labels_and_freezing(config: Path) -> None:
+    _synced(config)
+    ref = CellRef(
+        notebook_path="01_no_headings.ipynb", raw_hash=_hash_of(config, "01_no_headings.ipynb", 3)
+    )
+    save_gold(
+        GoldSet(queries=(GoldQuery(id="q001", text="How do I group rows?", type=QueryType.CONCEPT,
+                                   relevant=(ref,)),)),
+        _gold_path(config),
+    )  # fmt: skip
+    ok = GoldSet(queries=(
+        GoldQuery(id="a001", text="a new question", type=QueryType.CONCEPT, relevant=(ref,)),
+        GoldQuery(id="a002", text="something off topic", type=QueryType.UNANSWERABLE),
+    ))  # fmt: skip
+    save_gold(ok, _abstention_path(config))
+    good = runner.invoke(
+        cli.app, ["gold", "validate", "--kind", "abstention", "--config", str(config)]
+    )
+    assert good.exit_code == 0, good.stdout
+    assert "0 error(s), 0 warning(s)" in good.stdout
+    bad = GoldSet(queries=(
+        GoldQuery(id="q001", text=" how do I GROUP rows? ", type=QueryType.CONCEPT,
+                  relevant=(ref,)),
+        GoldQuery(id="a002", text="orphan", type=QueryType.CONCEPT,
+                  relevant=(CellRef(notebook_path="01_no_headings.ipynb", raw_hash="f" * 64),)),
+    ))  # fmt: skip
+    save_gold(bad, _abstention_path(config))
+    result = runner.invoke(
+        cli.app, ["gold", "validate", "--kind", "abstention", "--config", str(config)]
+    )
+    assert result.exit_code == 1
+    for code in ("id_in_gold", "same_text_as_gold", "orphan"):
+        assert code in result.stdout
+    assert "group rows" not in result.stdout.lower()  # no query text is printed
+    wrong = runner.invoke(cli.app, ["gold", "validate", "--kind", "other", "--config", str(config)])
+    assert wrong.exit_code == 1
+    assert "--kind must be gold or abstention" in wrong.stderr
+
+
+def test_an_abstention_set_must_not_be_frozen_or_split(config: Path) -> None:
+    _synced(config)
+    frozen = freeze_gold(_good_set(config, n_extra=0))
+    save_gold(frozen, _abstention_path(config))
+    result = runner.invoke(
+        cli.app, ["gold", "validate", "--kind", "abstention", "--config", str(config)]
+    )
+    assert result.exit_code == 1
+    assert "abstention_frozen" in result.stdout

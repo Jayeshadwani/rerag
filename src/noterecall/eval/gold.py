@@ -277,13 +277,53 @@ def validate_gold(
     return issues
 
 
-def next_query_id(gold: GoldSet) -> str:
-    """The next free id of the form q001, q002, ..."""
+def next_query_id(gold: GoldSet, prefix: str = "q") -> str:
+    """The next free id of the form q001, q002, ... (or a001, a002, ... with another prefix)."""
     taken = {q.id for q in gold.queries}
     n = len(taken) + 1
-    while f"q{n:03d}" in taken:
+    while f"{prefix}{n:03d}" in taken:
         n += 1
-    return f"q{n:03d}"
+    return f"{prefix}{n:03d}"
+
+
+def _normalized(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+def validate_abstention(
+    abstention: GoldSet, notebooks: Mapping[str, frozenset[str]], reference: GoldSet | None
+) -> list[Issue]:
+    """Findings for the report-only abstention set (proposal 007), ids and counts only.
+
+    It is never frozen and has no split; its ids must not collide with the gold set's and none of
+    its queries may be the same text as a gold query. Labels are checked like the gold set's."""
+    issues: list[Issue] = []
+    if abstention.frozen or any(q.split is not None for q in abstention.queries):
+        issues.append(
+            _issue(
+                "error", "abstention_frozen", None, "the abstention set must not be frozen or split"
+            )
+        )
+    ids = Counter(q.id for q in abstention.queries)
+    issues.extend(
+        _issue("error", "duplicate_id", i, "query id appears more than once")
+        for i, n in ids.items()
+        if n > 1
+    )
+    reference_ids = {q.id for q in reference.queries} if reference else set()
+    reference_texts = {_normalized(q.text) for q in reference.queries} if reference else set()
+    for query in abstention.queries:
+        issues.extend(_query_issues(query))
+        issues.extend(_orphan_issues(query, notebooks))
+        if query.id in reference_ids:
+            issues.append(
+                _issue("error", "id_in_gold", query.id, "id is also used in the gold set")
+            )
+        if _normalized(query.text) in reference_texts:
+            issues.append(
+                _issue("error", "same_text_as_gold", query.id, "query text equals a gold query")
+            )
+    return issues
 
 
 class GoldSummary(BaseModel):
