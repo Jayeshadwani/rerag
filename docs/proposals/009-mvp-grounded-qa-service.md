@@ -100,3 +100,18 @@ reported against the 512 MB limit; the 750 free instance hours are shared by the
 M7 (concept extraction with `concepts.yaml` review, grounded flashcards, the judge calibrated against the
 owner's labels) and M8 (FSRS scheduling, the daily planner, the review CLI). The plan for M7 stays in the
 conversation record and in proposal 006's notes (q081 claim 1 and q033 as known cases for the judge).
+
+## Result: ONNX parity (dev split, no LLM call)
+
+From `results/onnx_parity_dev.json` (`noterecall eval --suite onnx-parity --split dev`): the decided
+pipeline (structural cap 512, header, BM25 + dense, RRF k=10) with the torch embedder and with the ONNX
+embedder, same chunks, same queries.
+
+| metric | torch | ONNX |
+|---|---|---|
+| Recall@10 | 0.8604 | 0.8604 |
+| MRR@10 | 0.6720 | 0.6720 |
+| nDCG@10 | 0.6470 | 0.6470 |
+
+Maximum absolute cosine difference between the torch and ONNX vectors of the same texts: 0.000001.
+Decision: **pass** (the rule was: stop if dev Recall@10 drops by more than 0.01; it did not drop).

@@ -11,17 +11,19 @@ from fastapi.testclient import TestClient
 from make_fixtures import FAKE_ANTHROPIC_KEY
 from noterecall.api import UI_IP_HEADER, UI_SECRET_HEADER, create_app
 from noterecall.api_models import AskRequest, AskResponse, RefusalReason, Status, Turn
-from noterecall.config import ApiConfig, load_settings
+from noterecall.chunking.tokens import load_tokenizer
+from noterecall.config import ApiConfig, DecidedConfig, load_settings
 from noterecall.generate.answer import CitedClaim, Outcome, Response
 from noterecall.generate.ask import AskResult
 from noterecall.generate.rewrite import RewriteError, Rewriter
+from noterecall.index.embeddings import EmbeddingService, EmbeddingSpec, HashEmbedder
 from noterecall.llm.cache import ResponseCache
 from noterecall.llm.client import BudgetExceededError, LLMCallError, LLMClient
 from noterecall.llm.cost import CostMeter
 from noterecall.llm.fake import FakeTransport
 from noterecall.llm.prompts import load_prompt
 from noterecall.llm.transport import CachingClient
-from noterecall.models import Chunk, Piece, PieceKind, PieceUnit
+from noterecall.models import Cell, CellType, Chunk, Piece, PieceKind, PieceUnit
 from noterecall.retrieval.pipeline import AbstentionSignals
 from noterecall.serve.artifacts import (
     ArtifactError,
@@ -29,6 +31,7 @@ from noterecall.serve.artifacts import (
     load_artifacts,
     write_artifacts,
 )
+from noterecall.serve.build import build_index
 from noterecall.serve.ratelimit import RateLimiter
 from noterecall.serve.service import QAService, recent_turns, to_response
 from noterecall.srs.clock import FixedClock
@@ -359,3 +362,29 @@ def test_model_failures_map_to_5xx_without_details(exc: Exception, code: int) ->
     assert reply.status_code == code
     assert set(reply.json()) == {"detail", "retry_after_s"}
     assert reply.json()["detail"] != "x"  # the exception text is not passed on
+
+
+# --- build ---
+
+
+def test_build_index_writes_loadable_artifacts(tmp_path: Path) -> None:
+    settings = load_settings()
+    decided = settings.retrieval.decided
+    assert isinstance(decided, DecidedConfig)
+    spec: EmbeddingSpec = settings.embeddings.candidates[0]
+    service = EmbeddingService(HashEmbedder(16), spec, None, namespace="onnx")
+    cells = [
+        Cell(
+            index=0, cell_type=CellType.MARKDOWN, raw_hash="h0", clean_hash="c0",
+            source="# Title\n\nSome text about alpha.",
+        )
+    ]  # fmt: skip
+    manifest = build_index(
+        [("nb/a.ipynb", cells)], decided, load_tokenizer(settings.tokenizer.encoding), service,
+        tmp_path / "idx",
+    )  # fmt: skip
+    loaded = load_artifacts(tmp_path / "idx")
+    assert manifest.chunks == len(loaded.chunks) >= 1
+    assert loaded.matrix.shape == (manifest.chunks, 16)
+    assert (manifest.model, manifest.revision) == (spec.id, spec.revision)
+    assert manifest.chunk_cap == decided.chunk_cap

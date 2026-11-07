@@ -112,6 +112,7 @@ from noterecall.ingest.sync import (
 from noterecall.llm.cache import ResponseCache, cache_key
 from noterecall.llm.client import LLMError, Prompt
 from noterecall.retrieval.pipeline import Depths
+from noterecall.serve.build import build_index
 
 KNOWN_ERRORS = (
     LLMError,
@@ -795,6 +796,39 @@ def _eval_generation(settings: Settings, run: GenerationRun) -> str:
         cache.close()
         conn.close()
     return _save_generation(settings, results, run)
+
+
+def _build_index(settings: Settings, out: Path | None) -> str:
+    """Chunk, embed with ONNX and write the artifacts the service loads."""
+    decided = settings.retrieval.decided
+    if decided is None:
+        raise RunError("config has no [retrieval.decided]; nothing to build")
+    model = _dense_spec(settings)
+    directory = fetch_onnx_files(model.id, model.revision, settings.api.artifacts_dir / "onnx")
+    service = EmbeddingService(load_onnx_embedder(directory), model, None, namespace="onnx")
+    conn = connect(settings.paths.db_path)
+    try:
+        notebooks = list(notebook_cells(conn))
+    finally:
+        conn.close()
+    if not notebooks:
+        raise RunError("the database has no notebooks; run `noterecall sync` first")
+    target = out if out is not None else settings.api.artifacts_dir
+    tokenizer = load_tokenizer(settings.tokenizer.encoding)
+    manifest = build_index(notebooks, decided, tokenizer, service, target)
+    return f"build-index: wrote {manifest.chunks} chunks ({manifest.dim} dims) to {target}"
+
+
+@app.command("build-index")
+def build_index_command(
+    config: ConfigOption = None,
+    out: Annotated[Path | None, typer.Option("--out", help="Directory for the artifacts.")] = None,
+) -> None:
+    """Build the served index (chunks, ONNX vectors, manifest) from the synced notebooks."""
+    try:
+        typer.echo(_build_index(_settings(config), out))
+    except KNOWN_ERRORS as exc:
+        raise _fail(exc) from exc
 
 
 @app.command("eval")
