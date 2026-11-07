@@ -3,6 +3,7 @@
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from pydantic import ValidationError
 
 from noterecall.generate.citations import (
     Answer,
@@ -85,3 +86,14 @@ def test_a_non_insufficient_answer_is_valid_exactly_when_all_claims_cite_known_i
 ) -> None:
     expected = all(c and all(i in IDS for i in c) for _, c in claims)
     assert (validate_answer(answer(*claims), IDS) == []) is expected
+
+
+def test_the_answer_models_cannot_be_changed_after_parsing() -> None:
+    parsed = answer(("a claim", ["C1"]))
+    with pytest.raises(ValidationError):
+        parsed.insufficient = True  # type: ignore[misc]
+    with pytest.raises(ValidationError):
+        parsed.claims[0].text = "other"  # type: ignore[misc]
+    problem = validate_answer(answer(("x", ["C9"])), IDS)[0]
+    with pytest.raises(ValidationError):
+        problem.kind = ProblemKind.UNPARSABLE  # type: ignore[misc]

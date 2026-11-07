@@ -115,3 +115,14 @@ embedder, same chunks, same queries.
 
 Maximum absolute cosine difference between the torch and ONNX vectors of the same texts: 0.000001.
 Decision: **pass** (the rule was: stop if dev Recall@10 drops by more than 0.01; it did not drop).
+
+## Result: image measurements (local Docker, not Render)
+
+From `results/deploy_measurements.json` (`scripts/measure_images.py`). The API image was **killed for
+running out of memory at a 512 MB limit while starting**; with a 2048 MB limit it started and answered
+(retrieval ran, the model call failed because the measurement had no network and no real key) and peaked
+at the figure in the file. So the API does not fit Render's free 512 MB instance with the fp32 ONNX model;
+quantization is excluded by the owner's rule. Options for the owner (none taken here): a paid instance
+with more memory for the API, or a smaller dense model, which needs a new retrieval evaluation and its own
+proposal. The UI image is within the limit. The private-data build stage of `Dockerfile.api` could not be
+run here (no token); the measured API image used artifacts built locally from the same notes.

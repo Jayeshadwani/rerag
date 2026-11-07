@@ -6,6 +6,7 @@ import pytest
 
 from noterecall.eval.metrics import (
     MetricsError,
+    budget_prefix,
     chunk_cells,
     count_relevant_chunks,
     is_relevant,
@@ -123,3 +124,16 @@ def test_undefined_inputs_fail_loudly() -> None:
         ndcg_at_k(RANKED, RELEVANT, 5, 0)
     with pytest.raises(MetricsError, match="at least 1 token"):
         recall_at_token_budget(RANKED, RELEVANT, 0)
+
+
+def test_a_budget_of_one_token_is_valid_and_fits_nothing() -> None:
+    assert recall_at_token_budget(RANKED, RELEVANT, 1) == 0.0  # every chunk has 10 tokens
+    assert budget_prefix(RANKED, 1) == []
+    with pytest.raises(MetricsError, match="at least 1 token"):
+        budget_prefix(RANKED, 0)
+
+
+def test_score_query_defaults_to_k_5_and_10() -> None:
+    assert set(score_query(RANKED, RELEVANT, UNIVERSE)) == {
+        "recall@5", "mrr@5", "ndcg@5", "recall@10", "mrr@10", "ndcg@10",
+    }  # fmt: skip
