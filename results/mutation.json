@@ -1,0 +1,32 @@
+{
+  "tool": "scripts/mutation.py",
+  "mutants": 74,
+  "killed": 73,
+  "files": {
+    "src/noterecall/retrieval/fusion.py": {
+      "mutants": 9,
+      "killed": 9,
+      "survivors": []
+    },
+    "src/noterecall/eval/metrics.py": {
+      "mutants": 32,
+      "killed": 32,
+      "survivors": []
+    },
+    "src/noterecall/generate/citations.py": {
+      "mutants": 8,
+      "killed": 8,
+      "survivors": []
+    },
+    "src/noterecall/serve/ratelimit.py": {
+      "mutants": 25,
+      "killed": 24,
+      "survivors": [
+        {
+          "line": 91,
+          "change": "0 -> 1"
+        }
+      ]
+    }
+  }
+}

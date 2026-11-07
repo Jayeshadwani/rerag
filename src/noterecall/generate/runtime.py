@@ -5,10 +5,10 @@ answer in the response cache and stops at `llm.max_usd`, counting what the cache
 holds. Tests replace `create_transport` with the fake transport.
 """
 
-import tiktoken
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel
 
-from noterecall.chunking.tokens import Tokenizer
 from noterecall.config import Settings
 from noterecall.generate.answer import Generator
 from noterecall.llm.cache import ResponseCache
@@ -17,6 +17,9 @@ from noterecall.llm.cost import CostMeter, ledger_cost
 from noterecall.llm.openai_client import create_transport
 from noterecall.llm.prompts import load_prompt
 from noterecall.llm.transport import CachingClient
+
+if TYPE_CHECKING:
+    from noterecall.chunking.tokens import Tokenizer
 
 
 def spent_so_far(settings: Settings, cache: ResponseCache) -> float:
@@ -49,6 +52,12 @@ class NoCalls:
         raise LLMCallError("this client never calls the API (dry run)")
 
 
-def model_tokenizer(model: str) -> Tokenizer:
-    """The tokenizer tiktoken maps to the model (an approximation of the provider's count)."""
+def model_tokenizer(model: str) -> "Tokenizer":
+    """The tokenizer tiktoken maps to the model (an approximation of the provider's count).
+
+    Imported here so the served API, which never counts tokens, does not need tiktoken."""
+    import tiktoken  # noqa: PLC0415 - not installed in the API image
+
+    from noterecall.chunking.tokens import Tokenizer  # noqa: PLC0415 - imports tiktoken
+
     return Tokenizer(tiktoken.encoding_for_model(model))

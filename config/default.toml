@@ -117,3 +117,13 @@ cosine_only = -0.4020613431930542
 [generation.decided]
 cosine = -0.4020613431930542
 bm25 = -0.45198893547058105
+
+# The served service (proposal 009). The index files are built into the API image; the ONNX model
+# files are fetched at the pinned revision of [[embeddings.candidates]] when the image is built.
+[api]
+artifacts_dir = "data/artifacts"
+history_turns = 5
+max_question_chars = 500
+max_turn_chars = 3000
+daily_limit = 15
+rewrite_max_output_tokens = 200
