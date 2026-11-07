@@ -8,35 +8,51 @@ version = "0.0.0"
 description = "Revision planner over personal notebooks: hybrid retrieval, grounded cards, FSRS scheduling."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-dependencies = [
-    "bm25s==0.3.16",
-    "nbformat==5.11.1",
-    "numpy==2.5.4",
-    "openai==3.42.1",
-    "pydantic==2.14.1",
-    "pydantic-settings==2.16.2",
-    "pyyaml==6.0.3",
-    "sentence-transformers==6.2.0",
-    "structlog==26.1.0",
-    "tiktoken==0.14.0",
-    "torch==2.15.0",
-    "typer==0.27.3",
-]
+dependencies = []  # every dependency is in a group below (proposal 009)
 
 [project.scripts]
 noterecall = "noterecall.cli:app"
 
 [dependency-groups]
+# Runtime pieces, one group per job, so each image installs only what it runs (proposal 009).
+core = [
+    "bm25s==0.3.16",
+    "numpy==2.5.4",
+    "openai==3.42.1",
+    "pydantic==2.14.1",
+    "pydantic-settings==2.16.2",
+    "pyyaml==6.0.3",
+    "structlog==26.1.0",
+]
+ingest = ["nbformat==5.11.1", "tiktoken==0.14.0", "typer==0.27.3"]
+onnx = ["onnxruntime==1.31.1", "tokenizers==0.23.3"]
+build = ["huggingface-hub==2.4.0"]  # fetches the pinned ONNX model while an image is built
+api = ["fastapi==0.162.0", "uvicorn==0.54.0"]
+ui = ["requests==2.34.2", "streamlit==1.67.0"]
+eval = ["sentence-transformers==6.2.0", "torch==2.15.0"]  # offline evaluation only, never served
 dev = [
+    "httpx==0.28.1",
     "hypothesis==6.170.13",
+    "mutmut==3.8.1",
     "mypy==2.4.0",
     "pytest==9.2.0",
     "pytest-cov==7.1.0",
     "ruff==0.17.3",
 ]
+# What an image installs: the API (no torch), the index build step, and the UI (no noterecall).
+api-image = [{ include-group = "core" }, { include-group = "onnx" }, { include-group = "api" }]
+build-image = [
+    { include-group = "core" },
+    { include-group = "ingest" },
+    { include-group = "onnx" },
+    { include-group = "build" },
+]
+ui-image = [{ include-group = "ui" }]
 
 [tool.uv]
 required-version = "==0.11.32"
+# Development and CI install everything; the images export only their own group.
+default-groups = ["core", "ingest", "onnx", "build", "api", "ui", "eval", "dev"]
 
 # CPU-only torch on Linux (the default PyPI wheel pulls the CUDA libraries); macOS wheels are CPU.
 [[tool.uv.index]]
@@ -75,8 +91,8 @@ mypy_path = "scripts"
 untyped_calls_exclude = ["nbformat", "bm25s"]
 
 [[tool.mypy.overrides]]
-# PyYAML and bm25s ship no type hints and the project may not add stub packages (PLAN section 5).
-module = ["yaml", "bm25s"]
+# PyYAML, bm25s and onnxruntime ship no type hints and the project may not add stub packages (PLAN section 5).
+module = ["yaml", "bm25s", "onnxruntime"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

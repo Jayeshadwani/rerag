@@ -128,6 +128,11 @@ class Resources:
         self._dense: dict[tuple[int, Chunker, str, Variant], DenseIndex] = {}
         self._coverage: CoverageIndex | None = None
 
+    def with_services(self, services: Mapping[str, EmbeddingService]) -> "Resources":
+        """The same corpus, tokenizer, reranker and depths with other embedding services (the
+        ONNX parity check runs the same evaluation on another runtime)."""
+        return Resources(self._notebooks, self._tokenizer, services, self.reranker, self._depths)
+
     def chunks(self, cap: int, chunker: Chunker) -> list[Chunk]:
         if (cap, chunker) not in self._chunks:
             self._chunks[(cap, chunker)] = build_chunks(

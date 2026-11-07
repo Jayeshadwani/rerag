@@ -45,6 +45,7 @@ from noterecall.eval.ledger import (
     read_ledger,
     record_run,
 )
+from noterecall.eval.onnx_parity import run_parity
 from noterecall.eval.run_generation import (
     GenerationResults,
     Subset,
@@ -86,7 +87,8 @@ from noterecall.generate.smoke import (
     run_step_a,
     smoke_row,
 )
-from noterecall.index.embeddings import EmbeddingService
+from noterecall.index.embeddings import EmbeddingService, EmbeddingSpec
+from noterecall.index.onnx_embedder import fetch_onnx_files, load_onnx_embedder
 from noterecall.index.st_models import load_cross_encoder, load_embedder
 from noterecall.index.store import StoreError, connect, notebook_cells
 from noterecall.ingest.clean import RulesError, load_rules
@@ -585,6 +587,7 @@ class Suite(StrEnum):
     HEADER = "header"
     ABSTENTION = "abstention"
     GENERATION = "generation"
+    ONNX_PARITY = "onnx-parity"
 
 
 class QuerySet(StrEnum):
@@ -613,6 +616,41 @@ def _eval_header_dev(settings: Settings, out: Path | None) -> str:
     target = out if out is not None else settings.paths.results_dir / "header_ablation_dev.json"
     _write_json(target, results.model_dump_json(indent=2))
     return f"eval: wrote {target}"
+
+
+def _eval_onnx_parity(settings: Settings, out: Path | None) -> str:
+    """Torch against ONNX on the dev split (no LLM call): writes `results/onnx_parity_dev.json`."""
+    gold = load_gold(settings.paths.gold_path)
+    model = _dense_spec(settings)
+    conn = connect(settings.paths.db_path)
+    try:
+        resources = _resources(settings, conn, {model.id})
+        directory = fetch_onnx_files(model.id, model.revision, settings.api.artifacts_dir / "onnx")
+        onnx_service = EmbeddingService(
+            load_onnx_embedder(directory), model, conn, namespace="onnx"
+        )
+        results = run_parity(
+            settings, gold, resources, onnx_service,
+            RunContext(git=git_state(), versions=_versions()),
+        )  # fmt: skip
+    finally:
+        conn.close()
+    target = out if out is not None else settings.paths.results_dir / "onnx_parity_dev.json"
+    _write_json(target, results.model_dump_json(indent=2))
+    t, o = results.torch.means, results.onnx.means
+    lines = [f"eval: wrote {target}", f"  decision: {results.decision}: {results.reason}"]
+    lines += [
+        f"  {m}: torch {t[m]:.4f}, onnx {o[m]:.4f}" for m in ("recall@10", "mrr@10", "ndcg@10")
+    ]
+    lines.append(f"  max |cosine difference|: {results.cosine.max_abs_cosine_difference:.6f}")
+    return "\n".join(lines)
+
+
+def _dense_spec(settings: Settings) -> EmbeddingSpec:
+    decided = settings.retrieval.decided
+    if decided is None or decided.pipeline.dense_model is None:
+        raise RunError("config has no [retrieval.decided] with a dense model")
+    return next(c for c in settings.embeddings.candidates if c.id == decided.pipeline.dense_model)
 
 
 def _dense_models(settings: Settings) -> set[str]:
@@ -796,11 +834,15 @@ def _dispatch_eval(settings: Settings, suite: Suite, run: GenerationRun) -> str:
     split, milestone, out = run.split, run.milestone, run.out
     if suite is Suite.GENERATION:
         return _eval_generation(settings, run)
-    if suite in (Suite.HEADER, Suite.ABSTENTION):
+    if suite in (Suite.HEADER, Suite.ABSTENTION, Suite.ONNX_PARITY):
         if split is Split.TEST:
             raise RunError(f"--suite {suite.value} is a dev report; there is no test run")
-        runner = _eval_header_dev if suite is Suite.HEADER else _eval_abstention_dev
-        return runner(settings, out)
+        runners = {
+            Suite.HEADER: _eval_header_dev,
+            Suite.ABSTENTION: _eval_abstention_dev,
+            Suite.ONNX_PARITY: _eval_onnx_parity,
+        }
+        return runners[suite](settings, out)
     if split is Split.DEV:
         return _eval_dev(settings, out)
     if milestone is None:
