@@ -18,6 +18,7 @@ from make_fixtures import FIXTURE_DIR
 from noterecall import cli
 from noterecall.chunking.tokens import Tokenizer
 from noterecall.config import load_settings
+from noterecall.index import st_models
 from noterecall.index.embeddings import EmbeddingSpec, HashEmbedder
 from noterecall.index.store import connect, notebook_cells
 from noterecall.models import Cell
@@ -169,8 +170,9 @@ def fake_models(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         loaded.append(spec.id)
         return HashEmbedder()
 
-    monkeypatch.setattr(cli, "load_embedder", embedder)
-    monkeypatch.setattr(cli, "load_cross_encoder", lambda _spec: OverlapReranker())
+    # cli imports these lazily (they belong to the eval group), so patch them at their source
+    monkeypatch.setattr(st_models, "load_embedder", embedder)
+    monkeypatch.setattr(st_models, "load_cross_encoder", lambda _spec: OverlapReranker())
     return loaded
 
 

@@ -32,7 +32,8 @@ def test_render_yaml_has_two_free_docker_services_and_no_secret_values() -> None
         assert service["runtime"] == "docker"
         assert all(v.get("sync") is False and "value" not in v for v in service["envVars"])
     keys = {n: {v["key"] for v in s["envVars"]} for n, s in services.items()}
-    assert keys["noterecall-api"] == {"OPENAI_API_KEY", "UI_API_SECRET", "DATA_REPO_TOKEN"}
+    # the data token is a Secret File, not an environment variable
+    assert keys["noterecall-api"] == {"OPENAI_API_KEY", "UI_API_SECRET"}
     assert keys["noterecall-ui"] == {"API_URL", "UI_API_SECRET"}
 
 
@@ -45,7 +46,8 @@ def test_the_ui_image_installs_only_the_ui_group_and_copies_no_package() -> None
 
 def test_the_data_token_is_a_build_secret_and_stays_in_the_index_stage() -> None:
     text = (ROOT / "Dockerfile.api").read_text()
-    assert "--mount=type=secret,id=DATA_REPO_TOKEN" in text
+    assert "--mount=type=secret,id=DATA_REPO_TOKEN,required=true" in text
+    assert text.startswith("# syntax=docker/dockerfile:")
     final = text.split("\nFROM ${PY}\n")[1]
     assert "DATA_REPO_TOKEN" not in final
     assert "rerag-data" not in final

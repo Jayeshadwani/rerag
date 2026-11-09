@@ -90,7 +90,6 @@ from noterecall.generate.smoke import (
 from noterecall.index.embeddings import EmbeddingService, EmbeddingSpec
 from noterecall.index.onnx_embedder import fetch_onnx_files, load_onnx_embedder
 from noterecall.index.quantize import QuantizeError, quantize_int8
-from noterecall.index.st_models import load_cross_encoder, load_embedder
 from noterecall.index.store import StoreError, connect, notebook_cells
 from noterecall.ingest.clean import RulesError, load_rules
 from noterecall.ingest.ipynb import IpynbLoader, NotebookParseError
@@ -485,6 +484,12 @@ def _resources(
     models: set[str] | None = None,
 ) -> Resources:
     """Corpus, embedding services (cached in the database) and the reranker, all pinned."""
+    # Exception to the top-level-import rule: sentence-transformers (and torch behind it) belong
+    # to the `eval` group only. The image build runs `sync`, `quantize-onnx` and `build-index` with
+    # the `build-image` group, so this module must import without them (checked in CI by
+    # tests/unit/test_group_imports.py and the `groups` job).
+    from noterecall.index.st_models import load_cross_encoder, load_embedder  # noqa: PLC0415
+
     notebooks = list(notebook_cells(conn))
     if not notebooks:
         raise RunError("the database has no notebooks; run `noterecall sync` first")

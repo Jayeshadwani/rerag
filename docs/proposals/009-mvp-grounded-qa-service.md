@@ -152,3 +152,27 @@ drops by more than 0.01. It dropped by 0.0046: **pass**. The test split was not 
 **Result: memory** (`results/deploy_measurements.json`, local Docker). The int8 API image started and
 answered through retrieval under a 512 MB limit without being killed, peaking at 310 MB (file cache
 included); image size 701 MB. Not measured on Render.
+
+## Addendum 2: the image build runs with only its own dependency groups
+
+The first Render build failed in the index stage: `noterecall.cli` imported
+`noterecall.index.st_models` (sentence-transformers, torch) at module level, and the build-image group has
+neither. Fix: that import is now inside `_resources`, the only place that needs it (the only
+exception to the top-level-import rule, commented in the code). Checks added so it cannot return:
+`tests/unit/test_group_imports.py` (the evaluation packages are made unimportable and the build commands and
+the API are loaded anyway) and `scripts/check_groups.sh` (CI job `groups`, `make groups`), which installs
+only `build-image` and runs `python -m noterecall.cli --help`, `sync --help`, `quantize-onnx --help`,
+`build-index --help`, and installs only `api-image` and imports `noterecall.api`. Deploy changes: the data
+token is a Render Secret File read with `--mount=type=secret,...,required=true` (not an environment
+variable in `render.yaml`), `.dockerignore` also leaves out `.github`, `.env*`, `render.yaml` and
+`scripts`.
+
+**End-to-end local run.** `Dockerfile.api` was built with its index stage unchanged in substance:
+clone of a small synthetic data repository (the fixture notebooks, served by a local `git daemon`,
+`DATA_REPO_URL` build argument), then `sync`, `quantize-onnx`, `build-index`; the final image started,
+reported its chunks and the int8 runtime on `/health`, and answered `/ask` through retrieval (failing at the
+model call, as there was no key or network) under a 512 MB limit. It contained no notebook, no fp32 model,
+and the build secret was in no layer. Differences from Render in that run: the index stage used the full
+`python:3.12` image instead of `python:3.12-slim` plus `apt-get install git` (the sandbox could not reach
+the Debian mirrors, so the apt line itself was not run), and the tiktoken and Hugging Face files came from
+local caches because the build containers had no route to those hosts.

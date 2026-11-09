@@ -21,11 +21,13 @@ RUN uv export --frozen --no-hashes --no-emit-project --only-group build-image -o
 COPY src ./src
 COPY config ./config
 ENV PYTHONPATH=/src/src PATH=/bvenv/bin:$PATH
-# The token lives only in this RUN's secret mount: not in a layer, not in .git/config.
-RUN --mount=type=secret,id=DATA_REPO_TOKEN \
+# The token lives only in this RUN's secret mount (required: the build fails without it): not in a
+# layer, not in .git/config. DATA_REPO_URL is only overridden by the local end-to-end test.
+ARG DATA_REPO_URL=https://github.com/Jayeshadwani/rerag-data
+RUN --mount=type=secret,id=DATA_REPO_TOKEN,required=true \
     auth="$(printf 'x-access-token:%s' "$(cat /run/secrets/DATA_REPO_TOKEN)" | base64 -w0)" \
  && git -c "http.extraHeader=Authorization: Basic ${auth}" clone --depth 1 \
-      https://github.com/Jayeshadwani/rerag-data data/rerag-data \
+      "${DATA_REPO_URL}" data/rerag-data \
  && rm -rf data/rerag-data/.git
 # build-index fetches the pinned fp32 model, quantize-onnx makes the int8 model the service runs.
 RUN python -m noterecall.cli sync && python -m noterecall.cli quantize-onnx \
