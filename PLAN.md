@@ -2,9 +2,9 @@
 
 > Working name. Alternatives: **Revisely**, **Groundwork**, **NotebookRecall**. Rename freely; the package name below is `noterecall`.
 
-**One-line pitch:** A revision planner that turns my own ~53 Colab notebooks into grounded flashcards and a daily study plan. Retrieval is hybrid (BM25 + dense + rerank), every generated card cites the notebook cells it came from, and scheduling is done by a published memory model (FSRS), not by the LLM.
+**One-line pitch:** A revision planner that turns my own ~53 Colab notebooks into grounded flashcards and a daily study plan. **MVP (proposal 009): grounded Q&A over the notes (sync + ask), served as an API and a UI; flashcards, scheduling and the planner are deferred.** Retrieval is hybrid (BM25 + dense + rerank), every generated card cites the notebook cells it came from, and scheduling is done by a published memory model (FSRS), not by the LLM.
 
-**Why it is not an agent (say this in the interview):** The control flow is fixed and testable. The LLM is called at exactly four bounded points (optional contextual blurbs, concept extraction, card generation, Q&A answer) and always returns schema-validated JSON. Every decision that can be made by an algorithm (what to retrieve, what to review today, how to rank) is made by an algorithm. This makes the system measurable, cheap, and debuggable.
+**Why it is not an agent (say this in the interview):** The control flow is fixed and testable. The LLM is called at exactly four bounded points (optional contextual blurbs, concept extraction, card generation, Q&A answer; in the MVP only the answer, plus a small rewrite of a follow-up question when there is conversation history) and always returns schema-validated JSON. Every decision that can be made by an algorithm (what to retrieve, what to review today, how to rank) is made by an algorithm. This makes the system measurable, cheap, and debuggable.
 
 ---
 
@@ -68,6 +68,7 @@ src/noterecall/
   index/
     store.py             SQLite schema + repository functions
     embeddings.py        embedding model wrapper + content-hash cache
+    onnx_embedder.py     the same dense model served with onnxruntime (proposal 009)
     lexical.py           bm25s index build/load
     code_tokenizer.py    snake_case / camelCase / dotted-path aware tokenizer
   retrieval/
@@ -83,7 +84,7 @@ src/noterecall/
     prompts/*.md         versioned prompt files; version = file hash
   generate/
     citations.py         citation validator (the core anti-hallucination gate)
-    answer.py  concepts.py  cards.py
+    answer.py  ask.py    (concepts.py and cards.py: deferred, proposal 009)
   srs/
     clock.py             injectable clock (UTC)
     scheduler.py         thin wrapper over the `fsrs` package
@@ -96,7 +97,8 @@ src/noterecall/
     run_generation.py    citation validity, faithfulness, abstention F1
     judge.py             LLM judge + human-agreement calibration
   cli.py                 Typer: sync, label, eval, ask, cards, review, plan
-  api.py                 FastAPI (M9 only)
+  api.py                 FastAPI service: POST /ask, GET /health, rate limit (MVP, proposal 009)
+app/streamlit_app.py     Streamlit UI (own Render service; calls the API, no business logic)
 experiments/             one YAML per ablation config
 results/                 committed JSON metric outputs (metrics only, no note content)
 docs/adr/                one file per ADR below (copied verbatim from §2)
@@ -170,18 +172,21 @@ Primary metric: **Recall@10** (planner/card generation needs the right material 
 *Amended by proposal 003, `docs/proposals/003-m4-findings.md` (approved by the owner): abstention uses the top dense cosine similarity instead of a reranker score. Amended again by proposal 006, `docs/proposals/006-two-stage-abstention.md` (approved by the owner): two-stage abstention.*
 *Result (M6, dev split, `results/abstention_calibration_dev.json`): the pre-registered rule selected thresholds that refuse nothing. With at most 5% false refusals (at most 2 of 54 answerable dev queries) no threshold pair catches any of the 6 unanswerable dev queries; catching 1 needs at least 5 false refusals, catching all 6 needs at least 13. Stage 1 is therefore inactive on this corpus, and abstention rests on the model-side flag (stage 2).*
 
-### ADR-012 — Generation evaluation with a calibrated judge
+### ADR-012 — Generation evaluation with a calibrated judge (deferred by proposal 009)
 - Deterministic metrics first: citation validity rate, uncited-claim rate, abstention precision/recall.
 - Faithfulness: LLM judge labels each claim supported/unsupported against **only** its cited chunks, binary, pointwise (no pairwise → no position bias). Use a **different model** from the generator where possible (self-preference bias, Zheng et al. 2023).
 - Calibrate the judge: Jayesh hand-labels 30 claims; report judge–human agreement (Cohen's κ). If κ < 0.6, the judge number is not reported as a headline metric.
+*Deferred by proposal 009 (approved by the owner): not built in the MVP; the decision above is unchanged and stays locked for when it is taken up.*
 
-### ADR-013 — Scheduling by FSRS, planning by a deterministic algorithm
+### ADR-013 — Scheduling by FSRS, planning by a deterministic algorithm (deferred by proposal 009)
 - Each card has an FSRS state via the official `fsrs` Python package (py-fsrs, FSRS-6 generation; UTC only; `Scheduler`, `Card`, `Rating`, `ReviewLog`). Fuzzing disabled in tests. *Evidence:* the open-spaced-repetition benchmark (hundreds of millions of Anki reviews) shows FSRS predicting recall better than SM-2 for the large majority of users, even with default parameters.
 - **The user rates recall (Again/Hard/Good/Easy).** An LLM may *suggest* a rating for a typed answer; the user confirms. The LLM never writes to scheduler state.
 - Planner: inputs = date, minutes budget, interview date. Order: overdue cards by lowest retrievability → due cards → new cards from lowest-mastery concepts (mastery = mean retrievability of a concept's reviewed cards) → stop at budget. Ties broken by card ID. Pure function of (state, clock, config).
+*Deferred by proposal 009 (approved by the owner): not built in the MVP; the decision above is unchanged and stays locked for when it is taken up.*
 
-### ADR-014 — Concepts are extracted by LLM but owned by the human
+### ADR-014 — Concepts are extracted by LLM but owned by the human (deferred by proposal 009)
 Per notebook, the LLM proposes concepts with evidence cell hashes. Near-duplicates are merged by embedding similarity above a threshold, written to `concepts.yaml`, which the user edits (rename, merge, delete, set priority 1–3). Downstream steps read only the reviewed file.
+*Deferred by proposal 009 (approved by the owner): not built in the MVP; the decision above is unchanged and stays locked for when it is taken up.*
 
 ### ADR-015 — Reproducibility & caching
 Every LLM call cached on `sha256(model, prompt_version, inputs)`; embeddings cached on `sha256(model_revision, text)`. Prompt files are versioned by content hash. Config + model revisions + git SHA are written into every `results/*.json`. Re-running `make eval` with a warm cache must reproduce numbers exactly.
@@ -199,9 +204,9 @@ Every LLM call cached on `sha256(model, prompt_version, inputs)`; embeddings cac
 | **M4** Retrieval | code tokenizer, BM25, dense (candidates), RRF, reranker, ablation runner | Ablation table in `results/retrieval_ablation_dev.json` with CIs; winner chosen per ADR-010; test split run once; CI regression test on fixture corpus with fixed thresholds |
 | **M5** Enrichment + LLM clean ablations (amended by proposal 005) | deterministic headers; LLM blurbs and LLM markdown clean + verifier **not built, by owner decision** | Header on vs off reported with a CI. Blurb and LLM clean: **not measured, by owner decision** (proposal 005) |
 | **M6** Grounded Q&A (amended by proposal 006) | LLM client (+fake), cache, citation validator, two-stage abstention calibration, `noterecall ask` | Validator tests cover: unknown ID, empty citations, valid; (τ_cos, τ_bm25) chosen on dev by the pre-registered rule; false-refusal rate and unanswerable counts reported on test for cosine-only, cosine+BM25 and two-stage; no network in default test run |
-| **M7** Concepts + cards | extraction, merge, `concepts.yaml` review flow, card generation | 100% of stored cards pass citation validation; drop rate reported; judge calibrated (κ reported) and faithfulness reported |
-| **M8** Scheduler + planner | FSRS wrapper, review CLI, `noterecall plan` | Fixed-clock tests: budget never exceeded; overdue before due before new; deterministic ties; round-trip JSON of card state |
-| **M9** API + docs | FastAPI endpoints, README with **generated** tables, mermaid diagram, latency & cost report, mutation testing on `fusion.py`, `metrics.py`, `planner.py`, `citations.py` | README numbers rendered by `scripts/render_results.py` from `results/`; mutation score ≥ 70% on those modules; p50/p95 latency per stage reported |
+| **M7** Concepts + cards (**deferred by proposal 009**) | extraction, merge, `concepts.yaml` review flow, card generation | Not built. When taken up: 100% of stored cards pass citation validation; drop rate reported; judge calibrated (κ reported) and faithfulness reported |
+| **M8** Scheduler + planner (**deferred by proposal 009**) | FSRS wrapper, review CLI, `noterecall plan` | Not built. When taken up: fixed-clock tests: budget never exceeded; overdue before due before new; deterministic ties; round-trip JSON of card state |
+| **MVP** (replaces M9; proposal 009) | ONNX serving of the dense model, FastAPI service, Streamlit UI, two Render services, README with **generated** tables, mutation testing on `fusion.py`, `metrics.py`, `citations.py` and the rate limiter | ONNX dev Recall@10 within 0.01 of torch (else stop); API and rate-limit tests; image sizes, peak memory and cold-start time measured against 512 MB; README numbers rendered from `results/`; mutation score reported (target ≥ 70%) |
 
 ---
 
@@ -216,7 +221,7 @@ At least one row is expected to **not** help. Report it. A negative result you c
 
 ## 5. Allowed dependencies (anything else → proposal)
 
-Python 3.12, `uv`, `nbformat`, `pydantic`, `pydantic-settings`, `typer`, `numpy`, `bm25s`, `sentence-transformers` (+ `torch` CPU), `tiktoken` (or one tokenizer — pick once), `openai`, `fsrs`, `pyyaml`, `fastapi`, `uvicorn`, `structlog`. Dev: `pytest`, `pytest-cov`, `hypothesis`, `ruff`, `mypy`, `mutmut`.
+Python 3.12, `uv`, `nbformat`, `pydantic`, `pydantic-settings`, `typer`, `numpy`, `bm25s`, `sentence-transformers` (+ `torch` CPU; offline evaluation only), `onnxruntime` + `tokenizers` (serving the dense model), `huggingface-hub` (image build), `tiktoken` (or one tokenizer — pick once), `openai`, `fsrs` (deferred with M8), `pyyaml`, `fastapi`, `uvicorn`, `streamlit`, `requests`, `structlog`. Dev: `pytest`, `pytest-cov`, `hypothesis`, `ruff`, `mypy`, `mutmut`, `httpx`. Dependencies are in `pyproject.toml` groups (`core`, `ingest`, `onnx`, `build`, `api`, `ui`, `eval`, `dev`); each image installs only its own (proposal 009).
 Pin exact versions in `uv.lock`. **Verify each library's installed API before use** (e.g. `fsrs` changed its API across major versions: old releases used `FSRS()`, current uses `Scheduler()`).
 
 ---
@@ -225,7 +230,7 @@ Pin exact versions in `uv.lock`. **Verify each library's installed API before us
 
 - Retrieval (BM25 + dense + RRF + rerank, CPU) p95 < 1 s for one query; record actuals.
 - Full re-index of the corpus with warm caches < 2 min.
-- LLM cost per full card-generation run logged from token counts.
+- LLM cost per question logged from token counts (card generation: deferred).
 - All LLM calls: timeout, 3 retries with exponential backoff, logged tokens/latency.
 
 ---

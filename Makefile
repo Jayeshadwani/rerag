@@ -3,12 +3,12 @@
 
 UV := uv run --locked
 
-.PHONY: setup check lint types test banned sync eval eval-header eval-test results mutation
+.PHONY: readme readme-check setup check lint types test banned sync eval eval-header eval-test results mutation
 
 setup:
 	uv sync --locked
 
-check: lint types test banned
+check: lint types test banned readme-check
 
 lint:
 	$(UV) ruff check .
@@ -39,8 +39,14 @@ eval-header:
 eval-test:
 	$(UV) noterecall eval --split test --milestone $(MILESTONE)
 
+readme-check:
+	$(UV) python scripts/render_readme.py --check
+
+readme:
+	$(UV) python scripts/render_readme.py
+
 results:
 	$(UV) python scripts/render_results.py results/corpus_stats.json
 
 mutation:
-	@echo "make mutation: not available until M9 (mutmut on fusion, metrics, planner, citations)" >&2; exit 1
+	$(UV) python scripts/mutation.py

@@ -124,6 +124,21 @@ class GenerationConfig(BaseModel):
     label_errors: tuple[str, ...] = ()
 
 
+class ApiConfig(BaseModel):
+    """The served service (proposal 009). No secret here: keys come from the environment."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # chunks.jsonl, embeddings.npy, manifest.json and onnx/, built into the API image
+    artifacts_dir: Path
+    onnx_subdir: str = Field(min_length=1)  # inside artifacts_dir: "onnx" (fp32) or "onnx-int8"
+    history_turns: int = Field(ge=0)  # turns kept per browser session and sent with a question
+    max_question_chars: int = Field(ge=1)
+    max_turn_chars: int = Field(ge=1)  # per stored question or answer in the history
+    daily_limit: int = Field(ge=1)  # questions per end-user IP per UTC day
+    rewrite_max_output_tokens: int = Field(ge=1)
+
+
 class EmbeddingsConfig(BaseModel):
     """Candidate embedding models, smallest first (the first is the ADR-010 baseline)."""
 
@@ -190,6 +205,7 @@ class Settings(BaseSettings):
     llm: LlmConfig
     retrieval: RetrievalConfig
     generation: GenerationConfig
+    api: ApiConfig
     embeddings: EmbeddingsConfig
     rerank: RerankConfig
 

@@ -1,0 +1,48 @@
+# syntax=docker/dockerfile:1.7
+# The API image (proposal 009): FastAPI + onnxruntime + the built index + the int8 model. No torch, no tiktoken.
+# The notes are read from the private rerag-data repository in the `index` stage only, with a
+# build secret (DATA_REPO_TOKEN); the final stage copies the built artifacts and nothing else.
+ARG PY=python:3.12-slim
+
+FROM ${PY} AS tools
+RUN pip install --no-cache-dir uv==0.11.32
+WORKDIR /src
+COPY pyproject.toml uv.lock ./
+
+FROM tools AS api-deps
+RUN uv export --frozen --no-hashes --no-emit-project --only-group api-image -o /tmp/req.txt \
+ && python -m venv /venv && /venv/bin/pip install --no-cache-dir -r /tmp/req.txt
+
+FROM tools AS index
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+RUN uv export --frozen --no-hashes --no-emit-project --only-group build-image -o /tmp/req.txt \
+ && python -m venv /bvenv && /bvenv/bin/pip install --no-cache-dir -r /tmp/req.txt
+COPY src ./src
+COPY config ./config
+ENV PYTHONPATH=/src/src PATH=/bvenv/bin:$PATH
+# The token lives only in this RUN's secret mount: not in a layer, not in .git/config.
+RUN --mount=type=secret,id=DATA_REPO_TOKEN \
+    auth="$(printf 'x-access-token:%s' "$(cat /run/secrets/DATA_REPO_TOKEN)" | base64 -w0)" \
+ && git -c "http.extraHeader=Authorization: Basic ${auth}" clone --depth 1 \
+      https://github.com/Jayeshadwani/rerag-data data/rerag-data \
+ && rm -rf data/rerag-data/.git
+# build-index fetches the pinned fp32 model, quantize-onnx makes the int8 model the service runs.
+RUN python -m noterecall.cli sync && python -m noterecall.cli quantize-onnx \
+ && python -m noterecall.cli build-index
+
+FROM ${PY}
+RUN useradd --create-home app
+WORKDIR /app
+COPY --from=api-deps /venv /venv
+COPY src ./src
+COPY config ./config
+# Only the index and the int8 model: the fp32 model and the notes stay in the builder stage.
+COPY --from=index /src/data/artifacts/chunks.jsonl /src/data/artifacts/embeddings.npy \
+     /src/data/artifacts/manifest.json ./data/artifacts/
+COPY --from=index /src/data/artifacts/onnx-int8 ./data/artifacts/onnx-int8
+ENV PYTHONPATH=/app/src PATH=/venv/bin:$PATH PYTHONUNBUFFERED=1 \
+    NOTERECALL_LLM__CACHE_PATH=/tmp/llm_cache.sqlite
+USER app
+EXPOSE 8000
+CMD ["sh", "-c", "uvicorn noterecall.api:build_app --factory --host 0.0.0.0 --port ${PORT:-8000}"]

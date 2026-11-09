@@ -103,6 +103,15 @@ input = 1.0
 cached_input = 0.1
 output = 4.0
 
+[api]
+artifacts_dir = "artifacts"
+onnx_subdir = "onnx-int8"
+history_turns = 5
+max_question_chars = 500
+max_turn_chars = 3000
+daily_limit = 15
+rewrite_max_output_tokens = 200
+
 [generation]
 max_chunks = 2
 max_output_tokens = 300

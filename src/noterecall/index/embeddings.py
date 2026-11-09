@@ -73,26 +73,36 @@ class HashEmbedder:
         return 0
 
 
-def cache_key(spec: EmbeddingSpec, text: str) -> str:
-    """Cache key: the model, its revision and the exact string that is embedded."""
-    return hashlib.sha256(f"{spec.id}\0{spec.revision}\0{text}".encode()).hexdigest()
+def cache_key(spec: EmbeddingSpec, text: str, namespace: str = "") -> str:
+    """Cache key: the model, its revision and the exact string that is embedded. A non-empty
+    `namespace` (the ONNX backend uses one) keeps vectors of another runtime apart; the empty
+    namespace gives the keys that already exist."""
+    base = f"{spec.id}\0{spec.revision}\0{text}"
+    if namespace:
+        base = f"{spec.id}\0{spec.revision}\0{namespace}\0{text}"
+    return hashlib.sha256(base.encode()).hexdigest()
 
 
 class EmbeddingService:
     """Prefix handling, batching and caching around an `Embedder`."""
 
     def __init__(
-        self, embedder: Embedder, spec: EmbeddingSpec, conn: sqlite3.Connection | None = None
+        self,
+        embedder: Embedder,
+        spec: EmbeddingSpec,
+        conn: sqlite3.Connection | None = None,
+        namespace: str = "",
     ) -> None:
         self.embedder = embedder
         self.spec = spec
         self._conn = conn
+        self._namespace = namespace
         self.hits = 0
         self.misses = 0
 
     def _embed(self, texts: Sequence[str], use_cache: bool = True) -> np.ndarray:
         conn = self._conn if use_cache else None
-        keys = [cache_key(self.spec, t) for t in texts]
+        keys = [cache_key(self.spec, t, self._namespace) for t in texts]
         cached = embeddings_get(conn, keys) if conn is not None else {}
         missing = [i for i, key in enumerate(keys) if key not in cached]
         self.hits += len(texts) - len(missing)

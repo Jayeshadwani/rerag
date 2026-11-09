@@ -1,0 +1,29 @@
+# Two free Render web services (proposal 009). Values marked sync: false are entered in the
+# Render dashboard when the Blueprint is created; none of them is stored in this file.
+services:
+  - type: web
+    name: noterecall-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile.api
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: UI_API_SECRET # the same value as on noterecall-ui
+        sync: false
+      - key: DATA_REPO_TOKEN # read-only token for the private rerag-data repository (build time)
+        sync: false
+
+  - type: web
+    name: noterecall-ui
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile.ui
+    dockerContext: .
+    envVars:
+      - key: API_URL # https://noterecall-api.onrender.com (the API service's URL, no trailing path)
+        sync: false
+      - key: UI_API_SECRET # the same value as on noterecall-api
+        sync: false
