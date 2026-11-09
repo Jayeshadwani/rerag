@@ -126,3 +126,29 @@ quantization is excluded by the owner's rule. Options for the owner (none taken 
 with more memory for the API, or a smaller dense model, which needs a new retrieval evaluation and its own
 proposal. The UI image is within the limit. The private-data build stage of `Dockerfile.api` could not be
 run here (no token); the measured API image used artifacts built locally from the same notes.
+
+## Addendum 1 (owner decision): serve an int8 dynamically quantized model
+
+**Why.** The fp32 ONNX API image was killed for running out of memory at 512 MB (section above). The
+owner chose option A: quantize to int8 with onnxruntime dynamic quantization, re-run the dev parity
+check against the torch numbers with the same stop rule, and re-measure.
+
+**Method and tools** (also in `results/onnx_int8_quantization.json`, written by `noterecall quantize-onnx`
+next to the model): `onnxruntime.quantization.quantize_dynamic`, weights `QuantType.QInt8`,
+`per_channel=False`, `reduce_range=False`, default operator set (MatMul and friends), no calibration
+data. Source: `onnx/model.onnx` of `BAAI/bge-base-en-v1.5` at revision
+`a5beb1e3e68b9ab74eb54cfd186867f64f240e1a`. Tools: onnxruntime 1.31.1 and the new build-time dependency
+`onnx==1.23.2` (with its transitive `ml-dtypes`, `protobuf`; locked in `uv.lock`), added to the `build`
+group only: the API image installs neither it nor the quantizer; the quantized model is made in the image's
+build stage. The fp32 model is not copied into the final image. The query instruction and `[CLS]` pooling
+are unchanged, and the chunk vectors are recomputed with the int8 model (`manifest.json` records
+`runtime = onnxruntime:onnx-int8` and the service refuses an index built with another variant).
+
+**Result: parity** (`results/onnx_int8_parity_dev.json`, dev split, no LLM call). Recall@10 torch 0.8604,
+int8 0.8558 (difference -0.0046, 95% interval -0.0139 to 0.0000 on 54 queries), MRR@10 0.6720 vs 0.6764,
+nDCG@10 0.6470 vs 0.6533; maximum absolute cosine difference to torch 0.0906. Rule: stop if Recall@10
+drops by more than 0.01. It dropped by 0.0046: **pass**. The test split was not run for this variant.
+
+**Result: memory** (`results/deploy_measurements.json`, local Docker). The int8 API image started and
+answered through retrieval under a 512 MB limit without being killed, peaking at 310 MB (file cache
+included); image size 701 MB. Not measured on Render.

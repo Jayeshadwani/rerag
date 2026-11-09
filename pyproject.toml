@@ -26,7 +26,7 @@ core = [
 ]
 ingest = ["nbformat==5.11.1", "tiktoken==0.14.0", "typer==0.27.3"]
 onnx = ["onnxruntime==1.31.1", "tokenizers==0.23.3"]
-build = ["huggingface-hub==2.4.0"]  # fetches the pinned ONNX model while an image is built
+build = ["huggingface-hub==2.4.0", "onnx==1.23.2"]  # fetch the ONNX model, then quantize it, while an image is built
 api = ["fastapi==0.162.0", "uvicorn==0.54.0"]
 ui = ["requests==2.34.2", "streamlit==1.67.0"]
 eval = ["sentence-transformers==6.2.0", "torch==2.15.0"]  # offline evaluation only, never served
@@ -92,7 +92,7 @@ untyped_calls_exclude = ["nbformat", "bm25s"]
 
 [[tool.mypy.overrides]]
 # PyYAML, bm25s and onnxruntime ship no type hints and the project may not add stub packages (PLAN section 5).
-module = ["yaml", "bm25s", "onnxruntime"]
+module = ["yaml", "bm25s", "onnxruntime", "onnxruntime.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

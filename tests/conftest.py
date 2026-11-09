@@ -105,6 +105,7 @@ output = 4.0
 
 [api]
 artifacts_dir = "artifacts"
+onnx_subdir = "onnx-int8"
 history_turns = 5
 max_question_chars = 500
 max_turn_chars = 3000

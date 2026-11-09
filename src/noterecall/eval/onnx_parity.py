@@ -50,6 +50,7 @@ class ParityResults(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     meta: RunMeta
+    variant: str = "onnx"  # the model directory that was compared with torch
     torch: ConfigResult
     onnx: ConfigResult
     recall10_comparison: Comparison

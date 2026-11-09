@@ -1,0 +1,12 @@
+{
+  "method": "onnxruntime.quantization.quantize_dynamic",
+  "weight_type": "QInt8",
+  "per_channel": false,
+  "reduce_range": false,
+  "onnx_version": "1.23.2",
+  "onnxruntime_version": "1.31.1",
+  "source_sha256": "9bc579acdba21c253c62a9bf866891355a63ffa3442b52c8a37d75b2ccb91848",
+  "source_bytes": 435811539,
+  "output_sha256": "520f3e21f4be0c8683013523608b22396648827e5d3e7b721149c9fdb8d8068d",
+  "output_bytes": 109668941
+}

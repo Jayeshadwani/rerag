@@ -27,7 +27,7 @@ from noterecall.llm.client import LLMClient
 from noterecall.llm.prompts import load_prompt
 from noterecall.retrieval.dense import DenseIndex
 from noterecall.retrieval.pipeline import Components, Depths, RetrievalPipeline
-from noterecall.serve.artifacts import Artifacts, load_artifacts
+from noterecall.serve.artifacts import Artifacts, load_artifacts, runtime_label
 from noterecall.serve.ratelimit import RateLimiter
 from noterecall.serve.service import QAService
 from noterecall.srs.clock import SystemClock
@@ -60,6 +60,11 @@ def build_pipeline(
         raise StartupError("the built index was made by another model or revision than the config")
     if manifest.chunk_cap != decided.chunk_cap or manifest.header != decided.variant.header:
         raise StartupError("the built index does not match the decided chunk cap and header")
+    if manifest.runtime != runtime_label(settings.api.onnx_subdir):
+        raise StartupError(
+            f"the built index was made with {manifest.runtime}, "
+            f"the config serves {runtime_label(settings.api.onnx_subdir)}"
+        )
     chunks = artifacts.chunks
     texts = {c.id: index_text(c, decided.variant.header) for c in chunks}
     lexical = LexicalIndex.build(chunks, tokenize_code, texts)
@@ -78,8 +83,9 @@ def build_pipeline(
 def build_qa(settings: Settings, artifacts: Artifacts, client: LLMClient) -> QAService:
     """The question-answering service over a client (the real one, or a fake in tests)."""
     spec = dense_spec(settings)
-    embedder = load_onnx_embedder(settings.api.artifacts_dir / "onnx")
-    service = EmbeddingService(embedder, spec, None, namespace="onnx")
+    onnx_dir = settings.api.artifacts_dir / settings.api.onnx_subdir
+    embedder = load_onnx_embedder(onnx_dir)
+    service = EmbeddingService(embedder, spec, None, namespace=settings.api.onnx_subdir)
     pipeline = build_pipeline(settings, artifacts, service)
     thresholds = settings.generation.decided
     if thresholds is None:

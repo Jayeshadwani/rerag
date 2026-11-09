@@ -5,12 +5,11 @@ built and measured with local Docker only. Read "Before you start" first.
 
 ## Before you start
 
-1. **Memory.** The API image was killed at a 512 MB limit while starting (see the README table and
-   `results/deploy_measurements.json`). Render's free web service has 512 MB, so the API will most
-   likely fail there. Choose a paid plan for `noterecall-api` with clearly more memory than the measured
-   peak (change `plan: free` in `render.yaml`, after checking Render's current plans and prices), or
-   decide on a smaller dense model (that needs a proposal and a new retrieval evaluation). The UI runs
-   within the free limit.
+1. **Memory.** The fp32 model did not fit a 512 MB limit, so the API serves an int8 quantized model
+   (proposal 009, addendum 1). Locally, under a 512 MB limit, the API image started and answered
+   through retrieval; see the README table and `results/deploy_measurements.json`. Render's accounting
+   may differ from Docker's, so watch the first deploy's memory graph. The dev Recall@10 of the int8 model
+   is a little lower than torch's (README), and it was not run on the test split.
 2. **Free hours.** If both services stay on the free plan, they share 750 instance hours a month; when
    they are used up both are suspended until the month resets.
 3. **Cold starts.** A free service sleeps when idle; the first request after that takes about a minute.
@@ -38,7 +37,7 @@ built and measured with local Docker only. Read "Before you start" first.
    `render.yaml`. Render lists the two services and asks for every variable marked `sync: false`:
    - `noterecall-api`: `OPENAI_API_KEY`, `UI_API_SECRET`, `DATA_REPO_TOKEN` (the token from step 3).
    - `noterecall-ui`: `UI_API_SECRET` (same value as the API), and `API_URL`: leave it empty for now.
-6. **Wait for the API build.** It clones the notes, runs `sync` and `build-index` (several minutes on
+6. **Wait for the API build.** It clones the notes, runs `sync`, `quantize-onnx` and `build-index` (several minutes on
    CPU) and ends with the service answering `GET /health`. Open
    `https://<api-service>.onrender.com/health`: it should show `"status":"ok"` and the chunk count.
 7. **Set `API_URL`.** On `noterecall-ui`, Environment: `API_URL` = the API service's URL

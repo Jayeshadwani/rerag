@@ -25,5 +25,9 @@ def test_values_come_from_the_results_files() -> None:
 def test_numbers_in_the_new_sections_are_placeholders() -> None:
     template = render_readme.TEMPLATE.read_text(encoding="utf-8")
     body = template.split("## Notes from earlier milestones")[0]
-    tables = [ln for ln in body.splitlines() if ln.startswith("|") and re.search(r"\d", ln)]
+    tables = [
+        ln
+        for ln in body.splitlines()
+        if ln.startswith("|") and re.search(r"\d+\.\d+|\d+/\d+|\b\d{2,}\b", ln)
+    ]
     assert all("{{" in ln for ln in tables if not ln.startswith("|---"))

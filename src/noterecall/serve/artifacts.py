@@ -21,6 +21,11 @@ EMBEDDINGS_FILE = "embeddings.npy"
 MANIFEST_FILE = "manifest.json"
 
 
+def runtime_label(onnx_subdir: str) -> str:
+    """What the manifest records as the runtime of the vectors (and the service checks)."""
+    return f"onnxruntime:{onnx_subdir}"
+
+
 class ArtifactError(Exception):
     """Raised when the built index is missing, inconsistent or not what the config expects."""
 

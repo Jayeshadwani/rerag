@@ -49,4 +49,15 @@ def test_the_data_token_is_a_build_secret_and_stays_in_the_index_stage() -> None
     final = text.split("\nFROM ${PY}\n")[1]
     assert "DATA_REPO_TOKEN" not in final
     assert "rerag-data" not in final
-    assert "COPY --from=index /src/data/artifacts" in final
+    assert "COPY --from=index /src/data/artifacts/onnx-int8 " in final
+    assert "artifacts/onnx " not in final  # the fp32 model is not in the final image
+    assert "quantize-onnx" in text.split("\nFROM ${PY}\n")[0]
+
+
+def test_the_image_build_can_call_the_cli_as_a_module() -> None:
+    out = subprocess.run(
+        [sys.executable, "-m", "noterecall.cli", "--help"],
+        capture_output=True, text=True, check=True, env={"PYTHONPATH": str(ROOT / "src")},
+    )  # fmt: skip
+    for command in ("sync", "quantize-onnx", "build-index"):
+        assert command in out.stdout

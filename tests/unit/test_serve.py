@@ -39,6 +39,7 @@ from noterecall.srs.clock import FixedClock
 SECRET = "ui-secret"
 LIMITS = ApiConfig(
     artifacts_dir=Path("x"),
+    onnx_subdir="onnx-int8",
     history_turns=2,
     max_question_chars=50,
     max_turn_chars=20,
@@ -382,6 +383,7 @@ def test_build_index_writes_loadable_artifacts(tmp_path: Path) -> None:
     manifest = build_index(
         [("nb/a.ipynb", cells)], decided, load_tokenizer(settings.tokenizer.encoding), service,
         tmp_path / "idx",
+        "onnxruntime:onnx-int8",
     )  # fmt: skip
     loaded = load_artifacts(tmp_path / "idx")
     assert manifest.chunks == len(loaded.chunks) >= 1

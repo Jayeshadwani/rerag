@@ -131,6 +131,7 @@ class ApiConfig(BaseModel):
 
     # chunks.jsonl, embeddings.npy, manifest.json and onnx/, built into the API image
     artifacts_dir: Path
+    onnx_subdir: str = Field(min_length=1)  # inside artifacts_dir: "onnx" (fp32) or "onnx-int8"
     history_turns: int = Field(ge=0)  # turns kept per browser session and sent with a question
     max_question_chars: int = Field(ge=1)
     max_turn_chars: int = Field(ge=1)  # per stored question or answer in the history

@@ -35,6 +35,7 @@ def make_index(directory: Path) -> EmbeddingService:
     build_index(
         [("nb/a.ipynb", cells)], decided, load_tokenizer(settings.tokenizer.encoding), service,
         directory,
+        "onnxruntime:onnx-int8",
     )  # fmt: skip
     return service
 
@@ -121,3 +122,14 @@ def test_startup_fails_without_decided_config() -> None:
     )
     with pytest.raises(runtime.StartupError, match=r"retrieval\.decided"):
         runtime.dense_spec(undecided)
+
+
+def test_startup_refuses_an_index_made_with_another_onnx_variant(tmp_path: Path) -> None:
+    make_index(tmp_path / "idx")
+    artifacts = load_artifacts(tmp_path / "idx")
+    settings = load_settings()
+    service = EmbeddingService(HashEmbedder(DIM), runtime.dense_spec(settings), None)
+    other = artifacts.manifest.model_copy(update={"runtime": "onnxruntime:onnx"})
+    write_artifacts(tmp_path / "fp32", artifacts.chunks, artifacts.matrix, other)
+    with pytest.raises(runtime.StartupError, match="onnxruntime:onnx-int8"):
+        runtime.build_pipeline(settings, load_artifacts(tmp_path / "fp32"), service)

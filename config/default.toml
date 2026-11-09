@@ -122,6 +122,7 @@ bm25 = -0.45198893547058105
 # files are fetched at the pinned revision of [[embeddings.candidates]] when the image is built.
 [api]
 artifacts_dir = "data/artifacts"
+onnx_subdir = "onnx-int8" # the served model (proposal 009, addendum 1): int8 dynamic quantization
 history_turns = 5
 max_question_chars = 500
 max_turn_chars = 3000

@@ -29,7 +29,8 @@ scheduling and the daily planner (M8, ADR-014). See `docs/proposals/009-mvp-grou
 ```bash
 make setup                       # uv sync --locked
 uv run noterecall sync           # notebooks -> database (needs data/rerag-data)
-uv run noterecall build-index    # chunks + ONNX vectors -> data/artifacts
+uv run noterecall quantize-onnx  # fp32 ONNX model -> int8 model in data/artifacts/onnx-int8
+uv run noterecall build-index    # chunks + int8 ONNX vectors -> data/artifacts
 export OPENAI_API_KEY=...        # never committed, never logged
 export UI_API_SECRET=local-secret
 uv run uvicorn noterecall.api:build_app --factory --port 8000
@@ -43,25 +44,27 @@ uv run streamlit run app/streamlit_app.py
 Step by step in [`docs/DEPLOY.md`](docs/DEPLOY.md). Two Docker services from one `render.yaml`:
 `noterecall-api` (FastAPI, ONNX model, the notes' index) and `noterecall-ui` (Streamlit only). The notes
 and the index exist only in the API image, built from the private `rerag-data` repository with a build
-secret; the UI image contains no notes, no index, no torch and no onnxruntime.
+secret (the fp32 model and the notes are in the build stage only); the UI image contains no notes, no index, no torch and no onnxruntime.
 
-**The free API instance does not have enough memory for this model.** Measured locally with the image
-under a 512 MB limit (`scripts/measure_images.py`, `results/deploy_measurements.json`):
+**Memory.** The fp32 ONNX model did not fit: its image was killed for running out of memory at a 512 MB
+limit. The served model is therefore the **int8 dynamically quantized** version of the same model (see
+the next section for what that costs in retrieval quality). Measured locally with Docker
+(`scripts/measure_images.py`, `results/deploy_measurements.json`):
 
 | Image | Size (MB) | Memory limit (MB) | Out of memory | Start to healthy (s) | Peak memory (MB) |
 |---|---|---|---|---|---|
-| API | 1218 | 512 | yes | n/a | n/a |
-| API, 2048 MB limit | 1218 | 2048 | no | 3.3000 | 865 |
+| API, int8 model | 701 | 512 | no | 6.6000 | 310 |
+| API, int8 model, 2048 MB limit | 701 | 2048 | no | 2.9000 | 281 |
+| API, fp32 model (replaced) | 1218 | 512 | yes | n/a | n/a |
+| API, fp32 model, 2048 MB limit | 1218 | 2048 | no | 3.3000 | 865 |
 | UI | 823 | 512 | no | 1.3000 | 55 |
 
-The API process was killed by the kernel at the 512 MB limit while starting; given room it peaked at
-865 MB (this counts the file cache of the model file as
-well). The fp32 ONNX model is most of that; quantization is excluded by the project's rules, so the API needs an instance with more memory than Render's free tier, or a smaller
-dense model (which would need a new retrieval evaluation and a proposal). The UI peak was measured idle,
-with no browser connected. Measured on this machine's Docker, not on Render: Render's own start time
-includes the image pull and, after 15 minutes idle, a wake-up of about a minute. The API start time here
-excludes any model calls; the offline question in this measurement ran retrieval and then failed at the
-model call because no network and no real key were available.
+The int8 API stayed under the 512 MB limit after answering questions through retrieval. The peak
+counts the container's file cache as well. The UI peak was measured idle, with no browser connected.
+These are this machine's Docker numbers, not Render's: Render's own start time includes the image pull
+and, after 15 minutes idle, a wake-up of about a minute. In the API measurements the questions ran
+retrieval and then failed at the model call, because there was no network and no real key, so the
+peak does not include a model response being handled.
 
 The 750 free instance hours per month are shared by the two services; if they run out, both are
 suspended until the month resets.
@@ -119,19 +122,31 @@ Tokens: input 55051 (cached 0), output 4696 (reasoning 0). Total cost $0.0232.
 
 ## ONNX runtime parity (dev split, no model calls)
 
-The service embeds with the same model and revision on `onnxruntime` (CPU, fp32, no quantization) instead
-of torch. The M5 dev retrieval evaluation, run with both (`results/onnx_parity_dev.json`):
+The service embeds with the same model and revision on `onnxruntime` (CPU, no torch). The M5 dev retrieval
+evaluation was run with torch and with each ONNX variant: the fp32 model (`results/onnx_parity_dev.json`)
+and the int8 dynamically quantized model that is served (`results/onnx_int8_parity_dev.json`; chunk
+vectors and query vectors both come from the variant). The rule (proposal 009): if dev Recall@10 drops
+by more than 0.0100, stop.
 
-| Metric | torch | ONNX |
-|---|---|---|
-| Recall@10 | 0.8604 | 0.8604 |
-| MRR@10 | 0.6720 | 0.6720 |
-| nDCG@10 | 0.6470 | 0.6470 |
+| Metric | torch | ONNX fp32 | ONNX int8 (served) |
+|---|---|---|---|
+| Recall@10 | 0.8604 | 0.8604 | 0.8558 |
+| MRR@10 | 0.6720 | 0.6720 | 0.6764 |
+| nDCG@10 | 0.6470 | 0.6470 | 0.6533 |
+| Max abs cosine difference to torch | | 0.0000 | 0.0906 |
+| Mean abs cosine difference to torch | | 0.0000 | 0.0169 |
 
-Maximum absolute cosine difference between torch and ONNX vectors of the same texts:
-0.0000 over 138600 query-chunk
-pairs. Decision: pass (rule: stop if dev Recall@10 drops by more than
-0.0100).
+int8 Recall@10 minus torch: -0.0046 (95% bootstrap interval
+-0.0139 to 0.0000,
+54 dev queries). Decision for int8:
+pass. The drop is within the allowed bound but the quantized vectors are
+visibly different from torch's (see the cosine rows), and this was checked on the dev split only; the test
+split was not run for the int8 model.
+
+Quantization: onnxruntime.quantization.quantize_dynamic, weights QInt8, per-channel
+no, reduce-range no; onnx
+1.23.2, onnxruntime 1.31.1
+(`results/onnx_int8_quantization.json`, with the hashes of the source and output files).
 
 ## Mutation testing
 
@@ -155,7 +170,9 @@ mutmut (pinned in the dev group) could not be used; see the docstring of `script
 
 ## Known limitations
 
-- **Memory.** The free Render API instance (512 MB) cannot hold the fp32 ONNX model; see above.
+- **Quantized dense model.** The served embeddings come from an int8 model, chosen because the fp32 one did
+  not fit in 512 MB. Dev Recall@10 is lower than torch's by a small amount and the interval includes 0;
+  the test split was not run for it, so the test-split retrieval table above is the torch model's.
 - **Truncation.** At chunk cap 512, a share of chunks is longer than the dense model's input limit and is
   cut, so dense retrieval does not see their tails (counts in the earlier-milestones notes below, from
   `results/retrieval_ablation_dev.json`).

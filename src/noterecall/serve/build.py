@@ -19,12 +19,13 @@ from noterecall.serve.artifacts import Manifest, write_artifacts
 SCHEMA_VERSION = 1
 
 
-def build_index(
+def build_index(  # noqa: PLR0913, PLR0917 - the inputs of one build step
     notebooks: Sequence[tuple[str, list[Cell]]],
     decided: DecidedConfig,
     tokenizer: Tokenizer,
     service: EmbeddingService,
     directory: Path,
+    runtime: str,
 ) -> Manifest:
     """Write the artifacts for `notebooks` into `directory` and return the manifest."""
     chunks = build_chunks(list(notebooks), decided.chunk_cap, "structural", tokenizer)
@@ -34,7 +35,7 @@ def build_index(
         schema_version=SCHEMA_VERSION,
         model=service.spec.id,
         revision=service.spec.revision,
-        runtime="onnxruntime",
+        runtime=runtime,
         chunk_cap=decided.chunk_cap,
         header=decided.variant.header,
         chunks=len(chunks),

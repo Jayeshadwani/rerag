@@ -89,6 +89,7 @@ from noterecall.generate.smoke import (
 )
 from noterecall.index.embeddings import EmbeddingService, EmbeddingSpec
 from noterecall.index.onnx_embedder import fetch_onnx_files, load_onnx_embedder
+from noterecall.index.quantize import QuantizeError, quantize_int8
 from noterecall.index.st_models import load_cross_encoder, load_embedder
 from noterecall.index.store import StoreError, connect, notebook_cells
 from noterecall.ingest.clean import RulesError, load_rules
@@ -112,9 +113,11 @@ from noterecall.ingest.sync import (
 from noterecall.llm.cache import ResponseCache, cache_key
 from noterecall.llm.client import LLMError, Prompt
 from noterecall.retrieval.pipeline import Depths
+from noterecall.serve.artifacts import runtime_label
 from noterecall.serve.build import build_index
 
 KNOWN_ERRORS = (
+    QuantizeError,
     LLMError,
     ConfigError,
     GoldError,
@@ -626,9 +629,9 @@ def _eval_onnx_parity(settings: Settings, out: Path | None) -> str:
     conn = connect(settings.paths.db_path)
     try:
         resources = _resources(settings, conn, {model.id})
-        directory = fetch_onnx_files(model.id, model.revision, settings.api.artifacts_dir / "onnx")
+        directory = _served_onnx_dir(settings, model)
         onnx_service = EmbeddingService(
-            load_onnx_embedder(directory), model, conn, namespace="onnx"
+            load_onnx_embedder(directory), model, conn, namespace=settings.api.onnx_subdir
         )
         results = run_parity(
             settings, gold, resources, onnx_service,
@@ -636,7 +639,9 @@ def _eval_onnx_parity(settings: Settings, out: Path | None) -> str:
         )  # fmt: skip
     finally:
         conn.close()
-    target = out if out is not None else settings.paths.results_dir / "onnx_parity_dev.json"
+    name = settings.api.onnx_subdir.replace("-", "_")
+    target = out if out is not None else settings.paths.results_dir / f"{name}_parity_dev.json"
+    results = results.model_copy(update={"variant": settings.api.onnx_subdir})
     _write_json(target, results.model_dump_json(indent=2))
     t, o = results.torch.means, results.onnx.means
     lines = [f"eval: wrote {target}", f"  decision: {results.decision}: {results.reason}"]
@@ -798,14 +803,44 @@ def _eval_generation(settings: Settings, run: GenerationRun) -> str:
     return _save_generation(settings, results, run)
 
 
+def _served_onnx_dir(settings: Settings, model: EmbeddingSpec) -> Path:
+    """The directory of the model the service runs: the fetched fp32 files (`onnx`) or the
+    quantized model made from them (anything else must already exist, see `quantize-onnx`)."""
+    base = settings.api.artifacts_dir
+    fp32 = fetch_onnx_files(model.id, model.revision, base / "onnx")
+    served = base / settings.api.onnx_subdir
+    if served != fp32 and not (served / "model.onnx").is_file():
+        raise RunError(f"missing {served / 'model.onnx'}; run `noterecall quantize-onnx` first")
+    return served
+
+
+@app.command("quantize-onnx")
+def quantize_onnx_command(config: ConfigOption = None) -> None:
+    """Quantize the fetched fp32 ONNX model to int8 into the served directory."""
+    try:
+        settings = _settings(config)
+        model = _dense_spec(settings)
+        base = settings.api.artifacts_dir
+        fp32 = fetch_onnx_files(model.id, model.revision, base / "onnx")
+        record = quantize_int8(fp32, base / settings.api.onnx_subdir)
+        typer.echo(
+            f"quantize-onnx: {record.source_bytes} -> {record.output_bytes} bytes "
+            f"({record.method}, {record.weight_type})"
+        )
+    except KNOWN_ERRORS as exc:
+        raise _fail(exc) from exc
+
+
 def _build_index(settings: Settings, out: Path | None) -> str:
     """Chunk, embed with ONNX and write the artifacts the service loads."""
     decided = settings.retrieval.decided
     if decided is None:
         raise RunError("config has no [retrieval.decided]; nothing to build")
     model = _dense_spec(settings)
-    directory = fetch_onnx_files(model.id, model.revision, settings.api.artifacts_dir / "onnx")
-    service = EmbeddingService(load_onnx_embedder(directory), model, None, namespace="onnx")
+    directory = _served_onnx_dir(settings, model)
+    service = EmbeddingService(
+        load_onnx_embedder(directory), model, None, namespace=settings.api.onnx_subdir
+    )
     conn = connect(settings.paths.db_path)
     try:
         notebooks = list(notebook_cells(conn))
@@ -815,7 +850,9 @@ def _build_index(settings: Settings, out: Path | None) -> str:
         raise RunError("the database has no notebooks; run `noterecall sync` first")
     target = out if out is not None else settings.api.artifacts_dir
     tokenizer = load_tokenizer(settings.tokenizer.encoding)
-    manifest = build_index(notebooks, decided, tokenizer, service, target)
+    manifest = build_index(
+        notebooks, decided, tokenizer, service, target, runtime_label(settings.api.onnx_subdir)
+    )
     return f"build-index: wrote {manifest.chunks} chunks ({manifest.dim} dims) to {target}"
 
 
@@ -966,3 +1003,7 @@ def _smoke_step_b(
         refusals.append((q, asker.stage1_refuses(signals)))
     rows = [smoke_row(q.id, asker.ask(q.text).response, price) for q in choose_step_b(refusals)]
     return format_rows(rows)
+
+
+if __name__ == "__main__":
+    app()
