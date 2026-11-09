@@ -3,7 +3,7 @@
 
 UV := uv run --locked
 
-.PHONY: readme readme-check setup check lint types test banned sync eval eval-header eval-test results mutation
+.PHONY: groups readme readme-check setup check lint types test banned sync eval eval-header eval-test results mutation
 
 setup:
 	uv sync --locked
@@ -38,6 +38,10 @@ eval-header:
 # Runs the test split ONCE per milestone (the ledger in results/test_ledger.json refuses a repeat).
 eval-test:
 	$(UV) noterecall eval --split test --milestone $(MILESTONE)
+
+# Installs only the build-image / api-image groups and runs what those images run (needs network).
+groups:
+	scripts/check_groups.sh
 
 readme-check:
 	$(UV) python scripts/render_readme.py --check

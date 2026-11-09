@@ -13,8 +13,9 @@ services:
         sync: false
       - key: UI_API_SECRET # the same value as on noterecall-ui
         sync: false
-      - key: DATA_REPO_TOKEN # read-only token for the private rerag-data repository (build time)
-        sync: false
+    # The read-only token for the private rerag-data repository is NOT an environment variable: add
+    # it in the Render dashboard as a Secret File named DATA_REPO_TOKEN (docs/DEPLOY.md), which the
+    # Docker build reads as the build secret of the same name.
 
   - type: web
     name: noterecall-ui

@@ -14,10 +14,11 @@ built and measured with local Docker only. Read "Before you start" first.
    they are used up both are suspended until the month resets.
 3. **Cold starts.** A free service sleeps when idle; the first request after that takes about a minute.
    The UI says "waking up" when that happens.
-4. **Not verified:** that Render passes the `DATA_REPO_TOKEN` environment variable to the Docker build as
-   a BuildKit secret (`--mount=type=secret,id=DATA_REPO_TOKEN`). `Dockerfile.api` relies on it. Check
-   Render's "Docker builds / secrets" page; if it works differently, the build fails at the `index` stage
-   with "missing secret" and nothing is leaked. The private repository must never be copied into the
+4. **The data token is a Secret File, not an environment variable.** `Dockerfile.api` reads it with
+   `--mount=type=secret,id=DATA_REPO_TOKEN,required=true`, so the build fails at once if it is missing.
+   The clone step has been seen to work on Render with this setup; the rest of the build was checked
+   locally only. If the secret is missing the build stops at the `index` stage and nothing is leaked.
+   The private repository must never be copied into the
    final image: `tests/unit/test_deploy_files.py` checks the Dockerfile for that.
 
 ## Steps
@@ -35,7 +36,9 @@ built and measured with local Docker only. Read "Before you start" first.
      `openssl rand -hex 32`.
 5. **Create the Blueprint.** Render dashboard, New, Blueprint, pick the `rerag` repository, branch with
    `render.yaml`. Render lists the two services and asks for every variable marked `sync: false`:
-   - `noterecall-api`: `OPENAI_API_KEY`, `UI_API_SECRET`, `DATA_REPO_TOKEN` (the token from step 3).
+   - `noterecall-api`: `OPENAI_API_KEY`, `UI_API_SECRET`. Then, in the service's Environment page, add a
+     **Secret File** named `DATA_REPO_TOKEN` whose content is the token from step 3 (the Blueprint cannot
+     declare secret files).
    - `noterecall-ui`: `UI_API_SECRET` (same value as the API), and `API_URL`: leave it empty for now.
 6. **Wait for the API build.** It clones the notes, runs `sync`, `quantize-onnx` and `build-index` (several minutes on
    CPU) and ends with the service answering `GET /health`. Open

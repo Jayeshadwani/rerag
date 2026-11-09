@@ -9,3 +9,8 @@ mutants
 .ruff_cache
 .pytest_cache
 __pycache__
+.github
+.env
+.env.*
+render.yaml
+scripts
