@@ -10,6 +10,7 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 import streamlit_app
+from noterecall.config import load_settings
 
 APP = str(Path(__file__).resolve().parents[2] / "app" / "streamlit_app.py")
 ANSWERED = {
@@ -41,10 +42,27 @@ class FakeResponse:
         return self._body
 
 
+TOPICS = {"count": 3, "notebooks": ["01 - First", "02 - Second", "10 - Tenth"]}
+
+
+def patch_get(
+    monkeypatch: pytest.MonkeyPatch, handler: Callable[..., FakeResponse]
+) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+
+    def get(url: str, **kwargs: Any) -> FakeResponse:
+        calls.append({"url": url, **kwargs})
+        return handler(url, **kwargs)
+
+    monkeypatch.setattr(requests, "get", get)
+    return calls
+
+
 @pytest.fixture(autouse=True)
-def env(monkeypatch: pytest.MonkeyPatch) -> None:
+def env(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     monkeypatch.setenv("API_URL", "https://api.example/")
     monkeypatch.setenv("UI_API_SECRET", "shh")
+    return patch_get(monkeypatch, lambda *_a, **_k: FakeResponse(200, TOPICS))
 
 
 def patch_post(
@@ -70,7 +88,8 @@ def test_answer_shows_claims_tags_and_source_cards(monkeypatch: pytest.MonkeyPat
     assert not at.exception
     assert any("Alpha is first." in m.value and "[C1]" in m.value for m in at.markdown)
     assert "[C1] nb/a.ipynb > Intro > Alpha (cell 3)" in [e.label for e in at.expander]
-    assert at.expander[0].text[0].value == "alpha cell text"
+    source_card = next(e for e in at.expander if e.label.startswith("[C1]"))
+    assert source_card.text[0].value == "alpha cell text"
     assert calls[0]["url"] == "https://api.example/ask"
     assert calls[0]["json"] == {"question": "what is alpha?", "history": []}
     assert calls[0]["headers"]["X-UI-Secret"] == "shh"
@@ -91,7 +110,7 @@ def test_refusal_message(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_post(monkeypatch, lambda *_a, **_k: FakeResponse(200, REFUSED))
     at = ask(AppTest.from_file(APP).run(), "what is zeta?")
     assert [i.value for i in at.info] == ["This is not in your notes."]
-    assert len(at.expander) == 0
+    assert [e.label for e in at.expander if e.label.startswith("[C")] == []  # no source cards
 
 
 def test_rate_limit_message_and_the_question_is_not_kept(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -160,3 +179,78 @@ def test_the_visitor_ip_is_sent_with_the_secret(monkeypatch: pytest.MonkeyPatch)
     assert calls[0]["headers"] == {"X-UI-Secret": "shh", "X-UI-Client-IP": "203.0.113.4"}
     streamlit_app.ask_api("q", [], None)
     assert "X-UI-Client-IP" not in calls[1]["headers"]
+
+
+def test_heading_tab_title_description_and_limits(env: list[dict[str, Any]]) -> None:
+    at = AppTest.from_file(APP).run()
+    assert [t.value for t in at.title] == ["ReRAG"]
+    assert "NoteRecall" not in " ".join(m.value for m in at.markdown)
+    texts = [m.value for m in at.markdown]
+    assert streamlit_app.DESCRIPTION in texts
+    assert [c.value for c in at.caption] == [streamlit_app.LIMITS_LINE]
+    assert streamlit_app.DESCRIPTION.startswith("Ask questions about my ML course notes:")
+    assert "if the notes don't cover something, it says so." in streamlit_app.DESCRIPTION
+
+
+def test_the_limits_line_states_the_configured_daily_limit() -> None:
+    assert f"{load_settings().api.daily_limit} questions per day." in streamlit_app.LIMITS_LINE
+
+
+def test_whats_in_the_notes_lists_the_titles_with_the_count(
+    env: list[dict[str, Any]],
+) -> None:
+    at = AppTest.from_file(APP).run()
+    assert [e.label for e in at.expander] == ["What's in the notes (3 notebooks)"]
+    assert at.expander[0].text[0].value == "01 - First\n02 - Second\n10 - Tenth"
+    assert env[0]["url"] == "https://api.example/topics"
+    at.run()  # a rerun does not fetch the list again
+    assert len(env) == 1
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [requests.ConnectionError("down"), requests.Timeout("slow"), FakeResponse(503, None),
+     FakeResponse(500, {"detail": "x"})],
+)  # fmt: skip
+def test_the_topics_list_failing_does_not_break_the_page(
+    monkeypatch: pytest.MonkeyPatch, outcome: Any
+) -> None:
+    def handler(*_a: Any, **_k: Any) -> FakeResponse:
+        if isinstance(outcome, Exception):
+            raise outcome
+        assert isinstance(outcome, FakeResponse)
+        return outcome
+
+    patch_get(monkeypatch, handler)
+    at = AppTest.from_file(APP).run()
+    assert not at.exception
+    assert [e.label for e in at.expander] == ["What's in the notes"]
+    assert [i.value for i in at.info] == [streamlit_app.TOPICS_UNAVAILABLE]
+    assert len(at.chat_input) == 1  # the chat still works
+
+
+def test_example_questions_are_chips_and_choosing_one_asks_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = patch_post(monkeypatch, lambda *_a, **_k: FakeResponse(200, ANSWERED))
+    at = AppTest.from_file(APP).run()
+    assert list(streamlit_app.EXAMPLES) == [
+        "What does -1 mean in reshape?",
+        "Why does bagging reduce variance?",
+        "How do I choose k in KMeans with the elbow method?",
+    ]
+    assert [p.options for p in at.pills] == [list(streamlit_app.EXAMPLES)]
+    at.pills[0].set_value("Why does bagging reduce variance?").run()
+    assert calls[0]["json"]["question"] == "Why does bagging reduce variance?"
+    assert at.session_state["turns"][0]["question"] == "Why does bagging reduce variance?"
+    assert len(at.pills) == 0  # the chips go away once the conversation has started
+
+
+def test_a_chip_can_be_used_again_after_the_answer_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch_post(monkeypatch, lambda *_a, **_k: FakeResponse(429, {"detail": "daily limit reached"}))
+    at = AppTest.from_file(APP).run()
+    at.pills[0].set_value(streamlit_app.EXAMPLES[0]).run()
+    assert [w.value for w in at.warning] == [streamlit_app.LIMIT]
+    assert at.pills[0].value is None  # nothing stays selected, so the chip can be clicked again

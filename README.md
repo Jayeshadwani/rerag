@@ -18,7 +18,8 @@ Grounded question answering over a private notebook collection:
 - **Conversation.** The last 5 turns are kept in the browser session. With history, one small model call
   rewrites a follow-up into a standalone question; the history is never evidence and no rewrite call is
   made without history.
-- **Service.** A FastAPI service (`POST /ask`, `GET /health`) and a Streamlit chat page, deployed as two
+- **Service.** A FastAPI service (`POST /ask`, `GET /health`, `GET /topics` for the notebook titles) and a
+  Streamlit chat page ("ReRAG"), deployed as two
   free Render services. Limit: 15 questions per end-user IP per UTC day.
 
 Deferred, not built: concept extraction, flashcards and the faithfulness judge (M7, ADR-012/013), FSRS

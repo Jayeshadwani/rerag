@@ -16,6 +16,25 @@ import requests
 import streamlit as st
 
 HISTORY_TURNS = 5
+TITLE = "ReRAG"
+DESCRIPTION = (
+    "Ask questions about my ML course notes: Jupyter notebooks covering data analysis, classical "
+    "ML, deep learning and NLP. Every answer cites the notebook cells it comes from; if the notes "
+    "don't cover something, it says so."
+)
+LIMITS_LINE = "Answers come only from these notes, not general knowledge. 15 questions per day."
+TOPICS_LABEL = "What's in the notes"
+# Each was checked against the real index: the chunks that answer it rank within the 6 chunks the
+# model is given (see the PR description for the ranks).
+EXAMPLES = (
+    "What does -1 mean in reshape?",
+    "Why does bagging reduce variance?",
+    "How do I choose k in KMeans with the elbow method?",
+)
+TOPICS_TIMEOUT_S = (3, 5)  # the page must not hang while a sleeping service wakes up
+TOPICS_UNAVAILABLE = (
+    "The list could not be loaded (the service may be waking up). Reload the page in a minute."
+)
 CONNECT_TIMEOUT_S = 10
 READ_TIMEOUT_S = 120  # a sleeping free instance needs about a minute to wake up
 WAKING = (
@@ -78,6 +97,46 @@ def ask_api(question: str, turns: list[dict[str, Any]], ip: str | None) -> Reply
     return Reply("ok", body)
 
 
+def fetch_topics() -> dict[str, Any] | None:
+    """`GET /topics`: the notebook titles and their count, or None if the API did not answer."""
+    try:
+        response = requests.get(
+            os.environ["API_URL"].rstrip("/") + "/topics", timeout=TOPICS_TIMEOUT_S
+        )
+        body = response.json()
+    except (requests.ConnectionError, requests.Timeout, ValueError):
+        return None
+    if response.status_code != 200 or not isinstance(body.get("notebooks"), list):
+        return None
+    topics: dict[str, Any] = body
+    return topics
+
+
+def show_topics() -> None:
+    """The "What's in the notes" section: notebook titles from the API, loaded once per session."""
+    if "topics" not in st.session_state:
+        topics = fetch_topics()
+        if topics is not None:
+            st.session_state["topics"] = topics
+    topics = st.session_state.get("topics")
+    label = TOPICS_LABEL if topics is None else f"{TOPICS_LABEL} ({topics['count']} notebooks)"
+    with st.expander(label):
+        if topics is None:
+            st.info(TOPICS_UNAVAILABLE)
+        else:
+            st.text("\n".join(topics["notebooks"]))
+
+
+def pick_example() -> None:
+    """Callback of the example chips: the chosen example becomes the next question."""
+    st.session_state["pending_question"] = st.session_state["example"]
+    st.session_state["example"] = None  # so the same chip can be chosen again
+
+
+def show_examples() -> None:
+    st.pills("Try asking", EXAMPLES, key="example", on_change=pick_example)
+
+
 def answer_text(body: dict[str, Any]) -> str:
     """The answer as plain text, kept in the history that goes back to the API."""
     if body["status"] == "refused":
@@ -102,19 +161,24 @@ def show_answer(body: dict[str, Any]) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="NoteRecall", page_icon="📓")
-    st.title("NoteRecall")
-    st.caption("Ask a question about the notes. Answers cite the notebook cells they come from.")
+    st.set_page_config(page_title=TITLE, page_icon="📓")
+    st.title(TITLE)
+    st.markdown(DESCRIPTION)
+    st.caption(LIMITS_LINE)
     missing = [n for n in ("API_URL", "UI_API_SECRET") if not os.environ.get(n)]
     if missing:
         st.error(f"Not configured: set {', '.join(missing)}.")
         st.stop()
+    show_topics()
     turns: list[dict[str, Any]] = st.session_state.setdefault("turns", [])
+    if not turns:
+        show_examples()
     for turn in turns[-HISTORY_TURNS:]:
         st.chat_message("user").write(turn["question"])
         with st.chat_message("assistant"):
             show_answer(turn["body"])
-    question = st.chat_input("Ask about your notes")
+    typed = st.chat_input("Ask about your notes")
+    question = st.session_state.pop("pending_question", None) or typed
     if not question:
         return
     st.chat_message("user").write(question)
