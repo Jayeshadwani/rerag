@@ -29,6 +29,7 @@ from noterecall.serve.artifacts import (
     ArtifactError,
     Manifest,
     load_artifacts,
+    notebook_titles,
     write_artifacts,
 )
 from noterecall.serve.build import build_index
@@ -99,7 +100,7 @@ def make_rewriter(tmp_path: Path, reply: str) -> tuple[Rewriter, FakeTransport]:
 def manifest(n: int, dim: int) -> Manifest:
     return Manifest(
         schema_version=1, model="m", revision="r", runtime="onnxruntime",
-        chunk_cap=512, header=True, chunks=n, dim=dim,
+        chunk_cap=512, header=True, chunks=n, dim=dim, notebooks=["nb"],
     )  # fmt: skip
 
 
@@ -390,3 +391,55 @@ def test_build_index_writes_loadable_artifacts(tmp_path: Path) -> None:
     assert loaded.matrix.shape == (manifest.chunks, 16)
     assert (manifest.model, manifest.revision) == (spec.id, spec.revision)
     assert manifest.chunk_cap == decided.chunk_cap
+
+
+# --- topics ---
+
+
+def test_notebook_titles_are_sorted_by_notebook_number() -> None:
+    paths = [
+        "10 - Linear regression 2.ipynb",
+        "2 - Intro.ipynb",
+        "notes/09 - Basics.ipynb",
+        "appendix.ipynb",
+        "01 - First.ipynb",
+        "10 - Linear regression 2.ipynb",  # a duplicate path is listed once
+    ]
+    assert notebook_titles(paths) == [
+        "01 - First",
+        "2 - Intro",
+        "09 - Basics",
+        "10 - Linear regression 2",
+        "appendix",
+    ]  # numeric (not alphabetical: "10" after "2"), unnumbered last
+
+
+def test_topics_endpoint_lists_titles_and_count_without_note_content() -> None:
+    limiter = RateLimiter(LIMITS.daily_limit, FixedClock(datetime(2026, 3, 1, tzinfo=UTC)))
+    titles = ["01 - First", "02 - Second"]
+    app = create_app(Fixed(), limiter, SECRET, LIMITS, {}, titles)  # type: ignore[arg-type]
+    reply = TestClient(app).get("/topics")
+    assert reply.status_code == 200
+    assert reply.json() == {"count": 2, "notebooks": titles}
+    assert limiter.tracked() == 0  # listing the topics does not use up the daily allowance
+
+
+def test_the_built_manifest_carries_the_notebook_titles(tmp_path: Path) -> None:
+    cells = [
+        Cell(
+            index=0, cell_type=CellType.MARKDOWN, raw_hash="h0", clean_hash="c0",
+            source="# Title\n\nSome text about alpha.",
+        )
+    ]  # fmt: skip
+    settings = load_settings()
+    decided = settings.retrieval.decided
+    assert isinstance(decided, DecidedConfig)
+    spec: EmbeddingSpec = settings.embeddings.candidates[0]
+    service = EmbeddingService(HashEmbedder(16), spec, None, namespace="onnx")
+    notebooks = [("b/02 - Two.ipynb", cells), ("a/01 - One.ipynb", cells)]
+    manifest = build_index(
+        notebooks, decided, load_tokenizer(settings.tokenizer.encoding), service,
+        tmp_path / "idx", "onnxruntime:onnx-int8",
+    )  # fmt: skip
+    assert manifest.notebooks == ["01 - One", "02 - Two"]
+    assert load_artifacts(tmp_path / "idx").manifest.notebooks == ["01 - One", "02 - Two"]

@@ -9,6 +9,8 @@ neither the notebooks nor the database. `load_artifacts` checks that the files a
 other before anything is served."""
 
 import json
+import re
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +21,17 @@ from noterecall.models import Chunk
 CHUNKS_FILE = "chunks.jsonl"
 EMBEDDINGS_FILE = "embeddings.npy"
 MANIFEST_FILE = "manifest.json"
+
+
+def notebook_titles(paths: Iterable[str]) -> list[str]:
+    """Titles (file names without `.ipynb`), sorted by the notebook number at the start of the name
+    (`01 - ...`); names without a number come last, in name order."""
+
+    def key(title: str) -> tuple[int, int, str]:
+        match = re.match(r"\s*(\d+)", title)
+        return (0, int(match.group(1)), title) if match else (1, 0, title)
+
+    return sorted({Path(p).stem for p in paths}, key=key)
 
 
 def runtime_label(onnx_subdir: str) -> str:
@@ -43,6 +56,7 @@ class Manifest(BaseModel):
     header: bool
     chunks: int
     dim: int
+    notebooks: list[str]  # titles, in notebook-number order (what `GET /topics` lists)
 
 
 class Artifacts(BaseModel):

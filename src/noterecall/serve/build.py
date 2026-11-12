@@ -14,7 +14,7 @@ from noterecall.enrich.headers import index_text
 from noterecall.eval.run_retrieval import build_chunks
 from noterecall.index.embeddings import EmbeddingService
 from noterecall.models import Cell
-from noterecall.serve.artifacts import Manifest, write_artifacts
+from noterecall.serve.artifacts import Manifest, notebook_titles, write_artifacts
 
 SCHEMA_VERSION = 1
 
@@ -40,6 +40,7 @@ def build_index(  # noqa: PLR0913, PLR0917 - the inputs of one build step
         header=decided.variant.header,
         chunks=len(chunks),
         dim=int(matrix.shape[1]) if len(chunks) else 0,
+        notebooks=notebook_titles(path for path, _cells in notebooks),
     )
     write_artifacts(directory, chunks, matrix, manifest)
     return manifest

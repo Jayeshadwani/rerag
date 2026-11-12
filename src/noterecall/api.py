@@ -1,6 +1,7 @@
 """The HTTP service. Implements proposal 009 (the MVP service); grounding is ADR-011.
 
-`POST /ask` answers a question from the notes, or refuses; `GET /health` says the service is up.
+`POST /ask` answers a question from the notes, or refuses; `GET /health` says the service is up;
+`GET /topics` lists the notebook titles (no note content).
 `create_app` wires a `QAService`, a `RateLimiter` and the shared UI secret into a FastAPI app
 (tests pass fakes); `build_app` is the factory the server runs: it loads the built index and the
 ONNX model once, reads `OPENAI_API_KEY` from the environment only, and fails at startup if
@@ -9,13 +10,14 @@ Each accepted question is counted against the caller's daily limit before any mo
 question of a day gets 429."""
 
 import time
+from collections.abc import Sequence
 from typing import Annotated
 
 import structlog
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
-from noterecall.api_models import AskRequest, AskResponse, ErrorBody
+from noterecall.api_models import AskRequest, AskResponse, ErrorBody, TopicsResponse
 from noterecall.config import ApiConfig
 from noterecall.generate.rewrite import RewriteError
 from noterecall.llm.client import BudgetExceededError, LLMError
@@ -34,12 +36,13 @@ def error(status: int, detail: str, retry_after_s: int | None = None) -> JSONRes
     return JSONResponse(status_code=status, content=body.model_dump(), headers=headers)
 
 
-def create_app(
+def create_app(  # noqa: PLR0913, PLR0917 - the parts of one app, all needed
     service: QAService,
     limiter: RateLimiter,
     ui_secret: str | None,
     limits: ApiConfig,
     facts: dict[str, object],
+    topics: Sequence[str] = (),
 ) -> FastAPI:
     """The FastAPI app around a service."""
     app = FastAPI(title="NoteRecall", docs_url=None, redoc_url=None, openapi_url=None)
@@ -47,6 +50,10 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, object]:
         return {"status": "ok", **facts}
+
+    @app.get("/topics", response_model=TopicsResponse)
+    def topics_list() -> TopicsResponse:
+        return TopicsResponse(count=len(topics), notebooks=list(topics))
 
     @app.post("/ask", response_model=AskResponse, responses={429: {"model": ErrorBody}})
     def ask(

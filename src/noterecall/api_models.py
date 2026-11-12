@@ -74,6 +74,15 @@ class AskResponse(BaseModel):
     sources: list[Source]
 
 
+class TopicsResponse(BaseModel):
+    """`GET /topics`: the notebook titles in the index, by notebook number. No note content."""
+
+    model_config = ConfigDict(frozen=True)
+
+    count: int
+    notebooks: list[str]
+
+
 class ErrorBody(BaseModel):
     """The body of an error status (429 and 5xx): a short, generic message."""
 

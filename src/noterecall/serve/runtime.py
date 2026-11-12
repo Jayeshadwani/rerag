@@ -129,4 +129,4 @@ def build_service() -> FastAPI:
         "runtime": artifacts.manifest.runtime,
     }
     log.info("startup.ready", **facts)
-    return create_app(qa, limiter, secret, settings.api, facts)
+    return create_app(qa, limiter, secret, settings.api, facts, artifacts.manifest.notebooks)
